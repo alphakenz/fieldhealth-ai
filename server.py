@@ -158,7 +158,8 @@ def extract(note):
         key=os.environ.get('BACKBOARD_API_KEY'); model=os.environ.get('BACKBOARD_MODEL'); upstream=os.environ.get('BACKBOARD_PROVIDER')
         if not key or not model or not upstream: raise RuntimeError('Backboard API key, model and provider must be configured on the server')
         result=post_json('https://app.backboard.io/api/threads/messages',{'content':note,'system_prompt':PROMPT,'llm_provider':upstream,
-                         'model_name':model,'stream':False,'memory':'off','web_search':'off','json_output':True}, {'X-API-Key':key})
+                         'model_name':model,'stream':False,'memory':'off','web_search':'off','json_output':True,
+                         'response_format':{'type':'json_schema','json_schema':{'name':'field_health_extraction','strict':True,'schema':SCHEMA}}}, {'X-API-Key':key})
         content=result['content']
         model=result.get('model_name',model)
     else: raise RuntimeError('AI is not configured. Use manual entry, or configure Backboard / Ollama on the server.')

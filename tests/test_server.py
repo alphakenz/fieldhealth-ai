@@ -41,7 +41,7 @@ class WorkflowTests(unittest.TestCase):
     def test_backboard_adapter_pins_model(self):
         draft={k:self.visit[k] for k in server.FIELDS}
         with patch.dict(os.environ,{'AI_PROVIDER':'backboard','BACKBOARD_API_KEY':'test-key','BACKBOARD_MODEL':'verified-open-weight-model','BACKBOARD_PROVIDER':'openrouter'}),patch('server.post_json',return_value={'content':json.dumps(draft)}) as call:
-            result=server.extract('Synthetic household note.');self.assertEqual(result['provider'],'backboard');self.assertEqual(call.call_args.args[1]['model_name'],'verified-open-weight-model');self.assertEqual(call.call_args.args[1]['memory'],'off')
+            result=server.extract('Synthetic household note.');self.assertEqual(result['provider'],'backboard');self.assertEqual(call.call_args.args[1]['model_name'],'verified-open-weight-model');self.assertEqual(call.call_args.args[1]['memory'],'off');self.assertEqual(call.call_args.args[1]['response_format']['type'],'json_schema')
     def test_empty_ai_response_has_actionable_error(self):
         with patch.dict(os.environ,{'AI_PROVIDER':'backboard','BACKBOARD_API_KEY':'test-key','BACKBOARD_MODEL':'verified-open-weight-model','BACKBOARD_PROVIDER':'openrouter'}),patch('server.post_json',return_value={'content':''}):
             with self.assertRaisesRegex(RuntimeError,'empty AI response'):
