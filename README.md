@@ -14,7 +14,7 @@ export APP_TOKEN='choose-a-long-random-team-key'
 python server.py
 ```
 
-Open http://localhost:8000. In **Settings → Demo access**, enter the demo access code configured for the server. The app starts with two fictional examples so judges can explore the dashboard immediately. The browser must open the app online once before offline reload works. Offline capture works without a demo access code; server sync and inference require one.
+Open http://localhost:8000. In private mode, use **Settings → Demo access** to enter the code configured for the server. For the hackathon's public demo, set `PUBLIC_DEMO=true`; everyone can use sync and inference without entering a code. The app starts with two fictional examples so judges can explore the dashboard immediately. The browser must open the app online once before offline reload works.
 
 ## Enable genuine AI extraction
 
@@ -70,7 +70,7 @@ Expected administrative facts: HH-014, five present, unknown water source, follo
 
 Push the **contents of this folder** to a new GitHub repository, then create a Render Blueprint from `render.yaml`. The blueprint uses a paid web service with a 1 GB persistent disk; review the quoted charge and your available promotional credit before activating it. Free ephemeral storage is unsuitable for this SQLite implementation.
 
-Set `BACKBOARD_API_KEY`, `BACKBOARD_PROVIDER`, and `BACKBOARD_MODEL` in Render. Copy the generated demo `APP_TOKEN` from Render's environment settings into the app's Settings. Use a separate synthetic demo workspace and do not expose any private access token.
+Set `BACKBOARD_API_KEY`, `BACKBOARD_PROVIDER`, and `BACKBOARD_MODEL` in Render. The included Blueprint sets `PUBLIC_DEMO=true` for the hackathon, so judges do not need an access code. Keep the generated `APP_TOKEN` as a fallback, then change `PUBLIC_DEMO` to `false` and redeploy after the event to restore code-protected access. Use a separate synthetic demo workspace and do not expose any private access token.
 
 For a UI-only public demonstration, use `AI_PROVIDER=none`; describe that limitation explicitly. To demonstrate eligible AI, configure and run the genuine model adapter and save input/output evidence. No Render deployment or public GitHub repository has been created by this package.
 

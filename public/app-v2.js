@@ -24,6 +24,7 @@ const state = {
   listening: false,
   installPrompt: null,
   serverOnline: false,
+  publicDemo: false,
   syncConflict: null,
   lastError: ''
 };
@@ -169,8 +170,9 @@ function connectionStatus() {
   const pending = pendingCount();
   if (navigator.onLine === false) return { className: 'offline', label: 'Offline · saved on device' };
   if (state.syncConflict) return { className: 'conflict', label: 'Conflict · choose a copy' };
-  if (!token()) return { className: 'attention', label: 'Online · demo code needed' };
+  if (!token() && !state.publicDemo) return { className: 'attention', label: 'Online · demo code needed' };
   if (pending) return { className: 'pending', label: `Waiting to sync (${pending})` };
+  if (state.publicDemo && state.serverOnline) return { className: 'online', label: 'Public demo · online' };
   if (state.serverOnline) return { className: 'online', label: 'Synced' };
   return { className: 'offline', label: 'Saved on device' };
 }
@@ -298,7 +300,7 @@ function reportsView() {
   return `<section class="page-intro"><div><p class="eyebrow accent">Reports</p><h2>Simple field snapshot</h2><p class="lede">Use these totals for a quick review, then export the underlying records.</p></div><button class="button primary" data-action="export-csv" type="button">Export CSV</button></section><section class="metrics metrics-three"><article class="metric-card"><span>Households visited</span><strong>${households}</strong><small>Confirmed records</small></article><article class="metric-card"><span>People reached</span><strong>${people}</strong><small>People present</small></article><article class="metric-card"><span>Follow-ups</span><strong>${followUps}</strong><small>Records needing action</small></article></section><section class="report-grid"><div class="card"><div class="card-heading"><div><p class="eyebrow">Water sources</p><h3>What communities reported</h3></div></div>${Object.keys(water).length ? `<div class="bar-list">${Object.entries(water).map(([name, count]) => `<div class="bar-row"><div><span>${esc(name)}</span><strong>${count}</strong></div><div class="bar-track"><span style="width:${Math.min(100, count / Math.max(...Object.values(water)) * 100)}%"></span></div></div>`).join('')}</div>` : '<p class="muted">Confirm a visit to see the snapshot.</p>'}</div><div class="card"><p class="eyebrow accent">Export-ready</p><h3>Share the evidence</h3><p class="muted">CSV export includes visit facts, the original note, status, and timestamps. It works offline with the records on this device.</p><button class="button secondary" data-action="export-csv" type="button">Download visit CSV</button></div></section>`;
 }
 
-function settingsView() {
+function privateSettingsView() {
   return `<section class="page-intro"><div><p class="eyebrow accent">Settings</p><h2>Workspace settings</h2><p class="lede">Use the public demo with fictional records.</p></div></section><section class="settings-grid"><div class="card"><p class="eyebrow accent">Demo access</p><h3>Connect online services</h3><p class="muted">The demo access code enables synchronization and the AI assistant. It stays in this browser tab’s session.</p><label>Demo access code<input id="demo-code" type="password" value="${esc(token())}" placeholder="Enter the code provided for this demo" autocomplete="off"></label><div class="form-actions"><button class="button primary" data-action="save-token" type="button">Save demo code</button><button class="button secondary" data-action="clear-token" type="button">Clear</button></div></div><div class="card"><p class="eyebrow">Install</p><h3>Keep FieldHealth on your phone</h3><p class="muted">Install the PWA for a focused field workspace. Forms and records remain available when you are offline.</p><button id="install-app" class="button secondary" data-action="install-app" type="button" ${state.installPrompt ? '' : 'disabled'}>${state.installPrompt ? 'Install FieldHealth' : 'Install option appears in a supported browser'}</button></div><div class="card"><p class="eyebrow">Demo safety</p><h3>Fictional records only</h3><p class="muted">This public demo is for fictional records only. Do not enter names, phone numbers, or medical details.</p><div class="privacy-callout"><span>i</span><p>AI suggestions are not a diagnosis or a decision. A field worker reviews every suggestion before a visit is confirmed.</p></div></div><div class="card"><p class="eyebrow">Explore</p><h3>Reports and exports</h3><p class="muted">Review totals and download your visit register as a CSV file.</p><button class="button secondary" data-route="reports" type="button">Open reports</button></div></section>`;
 }
 
@@ -659,6 +661,11 @@ function enhanceVisitAssistant(form) {
   updateVisitActionState(form);
 }
 
+function settingsView() {
+  if (!state.publicDemo) return privateSettingsView();
+  return `<section class="page-intro"><div><p class="eyebrow accent">Settings</p><h2>Workspace settings</h2><p class="lede">Everything is ready for the public hackathon demo.</p></div></section><section class="settings-grid"><div class="card public-demo-card"><p class="eyebrow accent">Public judge demo</p><h3>Ready to try</h3><p class="muted">Online services are open for this hackathon demo. No access code is needed.</p><div class="public-demo-status"><span class="status-mark online" aria-hidden="true"></span><strong>AI and sync are available</strong></div></div><div class="card"><p class="eyebrow accent">How it works</p><h3>Try the complete flow</h3><p class="muted">Create a household visit, speak or type your notes, review the AI proposal, confirm the details, and export the records as CSV.</p></div></section>`;
+}
+
 function bindViewEvents() {
   document.querySelectorAll('[data-route]').forEach((element) => element.addEventListener('click', (event) => { event.preventDefault(); setRoute(element.dataset.route); }));
   document.querySelectorAll('[data-action="new-visit"]').forEach((element) => element.addEventListener('click', () => { state.current = emptyRecord(); state.captureMode = 'speak'; state.manualFields = new Set(); state.aiHasAnalyzed = false; state.aiResult = null; setRoute('visit'); }));
@@ -693,7 +700,14 @@ function bindViewEvents() {
 }
 
 async function refreshHealth() {
-  try { await api('/api/health'); state.serverOnline = true; } catch { state.serverOnline = false; }
+  try {
+    const health = await api('/api/health');
+    state.serverOnline = true;
+    state.publicDemo = health.public_demo === true;
+  } catch {
+    state.serverOnline = false;
+    state.publicDemo = false;
+  }
   render();
 }
 

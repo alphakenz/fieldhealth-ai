@@ -196,6 +196,9 @@ tbody tr:last-child td { border-bottom: 0; }
 .privacy-callout { display: flex; gap: 10px; margin-top: 18px; padding: 12px; border-radius: 10px; background: var(--cream); color: #79512f; font-size: .78rem; }
 .privacy-callout span { display: grid; width: 20px; height: 20px; flex: 0 0 auto; place-items: center; border-radius: 50%; background: #f1ca94; font-weight: 900; }
 .privacy-callout p { margin: 1px 0 0; }
+.public-demo-card { border-color: #a9d8c4; background: #f5fcf7; }
+.public-demo-status { display: flex; align-items: center; gap: 9px; margin-top: 20px; color: var(--green-dark); }
+.public-demo-status .status-mark { width: 10px; height: 10px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 4px rgba(27, 110, 60, .12); }
 .notice { position: fixed; right: 20px; bottom: 20px; z-index: 50; max-width: min(420px, calc(100vw - 40px)); padding: 13px 16px; border: 1px solid var(--border); border-radius: 12px; background: #fff; box-shadow: var(--shadow); color: var(--navy); font-size: .84rem; font-weight: 700; }
 .notice.success { border-color: #a9d8c4; background: #effaf3; }
 .notice.warning { border-color: #f1c49f; background: #fff6ee; }

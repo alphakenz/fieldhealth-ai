@@ -71,6 +71,12 @@ class WorkflowTests(unittest.TestCase):
     def test_unconfigured_ai_has_no_fake_result(self):
         with patch.dict(os.environ,{'AI_PROVIDER':'none'}):
             with self.assertRaises(RuntimeError):server.extract('Fictional household note.')
+    def test_public_demo_switch_accepts_common_true_values(self):
+        for value in ('1','true','TRUE','yes','on'):
+            with self.subTest(value=value), patch.dict(os.environ,{'PUBLIC_DEMO':value}):
+                self.assertTrue(server.public_demo_enabled())
+        with patch.dict(os.environ,{'PUBLIC_DEMO':'false'}):
+            self.assertFalse(server.public_demo_enabled())
     def test_identifiers_blocked(self):
         with self.assertRaises(ValueError):server.extract('Contact test@example.com')
         with self.assertRaises(ValueError):server.extract('Call 08012345678')

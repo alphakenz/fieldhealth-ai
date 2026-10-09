@@ -234,6 +234,10 @@ def extract(note):
     draft=validate_extraction(structured)
     return {'draft':draft,'issues':quality(draft),'model':model,'provider':provider,'prompt_version':'extract-v1','generated_at':dt.datetime.now(dt.timezone.utc).isoformat(),'review_status':'pending','extraction_mode':'explicit_facts_fallback' if fallback_used else 'model_json'}
 
+def public_demo_enabled():
+    return os.environ.get('PUBLIC_DEMO', '').strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self,*args,**kwargs): super().__init__(*args,directory=str(ROOT/'public'),**kwargs)
     def log_message(self,fmt,*args): pass  # Do not log notes or credentials.
@@ -246,6 +250,8 @@ class Handler(SimpleHTTPRequestHandler):
     def reply(self,code,payload):
         body=json.dumps(payload).encode(); self.send_response(code); self.send_header('Content-Type','application/json'); self.send_header('Content-Length',str(len(body))); self.end_headers(); self.wfile.write(body)
     def authorized(self):
+        if public_demo_enabled():
+            return True
         token=os.environ.get('APP_TOKEN','')
         supplied=self.headers.get('Authorization','').removeprefix('Bearer ')
         if not token or not hmac.compare_digest(token,supplied): self.reply(401,{'error':'Enter the demo access code in Settings to use online services.'}); return False
@@ -253,7 +259,7 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path == '/':
             self.path = '/index-v2.html'
-        if self.path=='/api/health': return self.reply(200,{'status':'ok'})
+        if self.path=='/api/health': return self.reply(200,{'status':'ok','public_demo':public_demo_enabled()})
         if self.path=='/api/visits':
             if self.authorized(): self.reply(200,{'visits':all_visits()})
             return
