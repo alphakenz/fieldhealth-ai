@@ -165,33 +165,68 @@ function pendingCount() {
   return state.records.filter((record) => !record.synced).length;
 }
 
+function connectionStatus() {
+  const pending = pendingCount();
+  if (navigator.onLine === false) return { className: 'offline', label: 'Offline · saved on device' };
+  if (state.syncConflict) return { className: 'conflict', label: 'Conflict · choose a copy' };
+  if (!token()) return { className: 'attention', label: 'Online · demo code needed' };
+  if (pending) return { className: 'pending', label: `Waiting to sync (${pending})` };
+  if (state.serverOnline) return { className: 'online', label: 'Synced' };
+  return { className: 'offline', label: 'Saved on device' };
+}
+
+function connectionMarkup() {
+  const status = connectionStatus();
+  return `<span id="connection" class="connection status-chip ${status.className}" role="status" aria-live="polite"><span class="status-mark" aria-hidden="true"></span>${status.label}</span>`;
+}
+
+function attentionMarkup() {
+  const items = [];
+  if (state.syncConflict) items.push({ label: 'Sync conflict', detail: 'Choose which copy to keep in Records.', action: 'records' });
+  state.records.filter((record) => !record.synced).slice(0, 3).forEach((record) => {
+    items.push({ label: record.household_code || 'Uncoded household', detail: record.status === 'draft' ? 'Complete the missing details before confirmation.' : 'Saved on this device and waiting to sync.', action: 'edit', id: record.id });
+  });
+  if (!items.length) return '';
+  const rows = items.map((item) => {
+    const attributes = item.action === 'edit' ? `data-action="edit-record" data-id="${esc(item.id)}"` : 'data-route="records"';
+    return `<button class="attention-row" ${attributes} type="button"><span class="attention-mark" aria-hidden="true">!</span><span><strong>${esc(item.label)}</strong><small>${esc(item.detail)}</small></span><span class="attention-arrow" aria-hidden="true">›</span></button>`;
+  }).join('');
+  return `<section class="attention-card" aria-labelledby="attention-title"><div class="card-heading"><div><p class="eyebrow">Needs attention</p><h2 id="attention-title">Keep your fieldwork moving</h2></div><span class="attention-count">${items.length}</span></div><div class="attention-list">${rows}</div></section>`;
+}
+
 function navIcon(name) {
   const paths = {
     today: '<path d="M4 5.5h16M6.5 3v5M17.5 3v5M5 9.5h14v10H5z"/><path d="M8 13h3M13 13h3M8 16h3"/>',
     visit: '<path d="M12 5v14M5 12h14"/>',
     records: '<path d="M6 4h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"/><path d="M8 8h8M8 12h8M8 16h5"/>',
-    more: '<circle cx="6" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="18" cy="12" r="1"/>'
+    settings: '<path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z"/><path d="m19 13.5 1.2 1-.1 1.8-1.5.8-.4 1.4.8 1.5-1.3 1.3-1.5-.8-1.4.4-.8 1.5-1.8.1-1-1.2-1.4-.4-1.5.8-1.3-1.3.8-1.5-.4-1.4-1.5-.8-.1-1.8 1.2-1  .4-1.4- .8-1.5 1.3-1.3 1.5.8 1.4-.4.8-1.5 1.8-.1 1 1.2 1.4.4Z"/>'
   };
   return `<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${paths[name]}</svg>`;
 }
 
 function navMarkup() {
-  const items = [['dashboard', 'Today', 'today'], ['visit', 'New visit', 'visit'], ['records', 'Records', 'records'], ['settings', 'Settings', 'more']];
+  const items = [['dashboard', 'Today', 'today'], ['visit', 'New visit', 'visit'], ['records', 'Records', 'records'], ['settings', 'Settings', 'settings']];
   return items.map(([route, label, icon]) => `<a class="nav-link ${state.route === route ? 'active' : ''}" href="#${route}" data-route="${route}">${navIcon(icon)}<span>${label}</span></a>`).join('');
+}
+
+function micIcon() {
+  return '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M8.5 21h7"/></svg>';
 }
 
 function shellMarkup() {
   return `
+    <a class="skip-link" href="#main">Skip to content</a>
     <aside class="app-sidebar">
-      <a class="brand" href="#dashboard" aria-label="FieldHealth home"><span class="brand-mark">FH</span><span><strong>FieldHealth</strong><small>Community health</small></span></a>
+      <a class="brand" href="#dashboard" aria-label="FieldHealth home"><span class="brand-mark">FH</span><span><strong>FieldHealth</strong><small>Field reporting workspace</small></span></a>
       <nav class="primary-nav" aria-label="Primary navigation">${navMarkup()}</nav>
       <div class="sidebar-foot"><span class="offline-dot"></span><span id="sidebar-status">Local-first workspace</span></div>
     </aside>
     <div class="app-shell">
       <header class="topbar">
-        <div><p class="eyebrow">Field workspace</p><h1 id="page-title">Today</h1></div>
-        <div class="topbar-actions"><span id="connection" class="connection"><span class="status-dot"></span>Checking connection</span><button id="sync" class="button secondary" type="button">Sync <span id="pending">0</span></button></div>
+        <div><p class="eyebrow">FieldHealth AI</p><h1 id="page-title">Today</h1></div>
+        <div class="topbar-actions">${connectionMarkup()}<button id="sync" class="button secondary" type="button">Sync <span id="pending">0</span></button></div>
       </header>
+      <div class="scope-notice" role="note"><span class="scope-icon" aria-hidden="true">i</span><span><strong>Fictional data</strong> · Administrative reporting only</span></div>
       <main id="main" tabindex="-1"></main>
       <nav class="mobile-nav" aria-label="Mobile navigation">${navMarkup()}</nav>
       <div id="notice" class="notice" role="status" hidden></div>
@@ -207,10 +242,11 @@ function dashboardView() {
   return `
     <section class="welcome-row"><div><p class="eyebrow accent">Good fieldwork starts with a clear note</p><h2>Turn a spoken observation into a ready-to-review visit.</h2><p class="lede">Use the assistant to capture what you see in plain language. It suggests structured fields while keeping your original note for review.</p></div><button class="button primary-action" data-action="new-visit" type="button">Start a visit</button></section>
     <section class="ai-card" aria-labelledby="assistant-title">
-      <div class="ai-card-heading"><div class="ai-badge">AI</div><div><p class="eyebrow accent">FieldHealth AI</p><h2 id="assistant-title">AI Field Assistant</h2><p>Speak or type a field note. The assistant will find counts, locations, water sources, and follow-up needs.</p></div><span class="ai-live">Ready</span></div>
-      <div class="assistant-input"><label for="ai-note">What did you observe?</label><div class="input-with-action"><textarea id="ai-note" rows="4" placeholder="Example: We visited five households. Two people were present at each home. Three use a borehole. One household needs a follow-up visit.">${esc(state.aiNote)}</textarea><button id="ai-voice" class="voice-button ${state.listening ? 'listening' : ''}" type="button" aria-label="Use voice input"><span class="voice-icon">●</span><span>${state.listening ? 'Listening…' : 'Speak'}</span></button></div><div class="assistant-actions"><span class="hint">Tip: tap your phone keyboard microphone if browser voice input is unavailable.</span><button id="analyze" class="button primary" type="button" ${state.aiBusy ? 'disabled' : ''}>${state.aiBusy ? 'Analyzing…' : 'Analyze note'}</button></div></div>
+      <div class="ai-card-heading"><div class="ai-badge">AI</div><div><p class="eyebrow accent">FieldHealth AI</p><h2 id="assistant-title">AI Field Assistant</h2><p>Speak or type a field note. The assistant finds counts, water sources, and follow-up needs while leaving your original words intact.</p></div><span class="ai-live">Ready</span></div>
+      <div class="assistant-input"><label for="ai-note">What did you observe?</label><div class="input-with-action"><textarea id="ai-note" rows="4" placeholder="Example: We visited five households. Two people were present at each home. Three use a borehole. One household needs a follow-up visit.">${esc(state.aiNote)}</textarea><button id="ai-voice" class="voice-button ${state.listening ? 'listening' : ''}" type="button" aria-label="Use voice input">${micIcon()}<span>${state.listening ? 'Listening…' : 'Speak'}</span></button></div><div class="assistant-actions"><span class="hint">Tip: tap your phone keyboard microphone if browser voice input is unavailable.</span><button id="analyze" class="button primary" type="button" ${state.aiBusy ? 'disabled' : ''}>${state.aiBusy ? 'Analyzing…' : 'Analyze note'}</button></div></div>
       ${ai ? aiResultMarkup(ai) : '<div class="ai-empty"><strong>Your original words stay visible.</strong><span>After analysis, review each suggestion before saving the visit.</span></div>'}
     </section>
+    ${attentionMarkup()}
     <section class="section-heading"><div><p class="eyebrow">Confirmed activity</p><h2>Your field snapshot</h2></div><button class="text-button" data-route="reports" type="button">Open reports</button></section>
     <section class="metrics metrics-four"><article class="metric-card"><span>Households visited</span><strong>${households}</strong><small>Confirmed visits</small></article><article class="metric-card"><span>People reached</span><strong>${people}</strong><small>Present during visits</small></article><article class="metric-card"><span>Follow-ups</span><strong>${followUps}</strong><small>Need attention</small></article><article class="metric-card"><span>Pending sync</span><strong>${pendingCount()}</strong><small>${state.serverOnline ? 'Ready to sync' : 'Saved on this device'}</small></article></section>
     ${state.records.length ? `<section class="card recent-card"><div class="card-heading"><div><p class="eyebrow">Recent records</p><h2>Latest visits</h2></div><button class="text-button" data-route="records" type="button">View all</button></div>${recentRows(state.records.slice(0, 3))}</section>` : '<section class="empty-card"><div class="empty-icon">+</div><h2>Your first visit starts here</h2><p>Capture a household visit and it will remain available even when you lose connection.</p><button class="button primary" data-action="new-visit" type="button">Create visit</button></section>'}`;
@@ -218,12 +254,12 @@ function dashboardView() {
 
 function aiResultMarkup(result) {
   const extraction = result.extraction || result.draft || {};
-  const rows = fields.map(([key, label]) => `<div class="suggestion-row"><span>${label}</span><strong>${esc(extraction[key] === null || extraction[key] === undefined || extraction[key] === '' ? 'Not found' : extraction[key])}</strong></div>`).join('');
+  const rows = fields.map(([key, label]) => `<div class="suggestion-row"><span>${label}</span><strong>${esc(extraction[key] === null || extraction[key] === undefined || extraction[key] === '' ? 'Not found in notes' : extraction[key])}</strong></div>`).join('');
   const applied = result.applied;
   const actions = applied
     ? '<p class="ai-applied-note"><span aria-hidden="true">✓</span><span>These values were filled into the visit details below. Review anything marked <strong>Needs attention</strong>.</span></p><button class="text-button" data-action="clear-ai" type="button">Clear result</button>'
     : '<button class="button primary" data-action="use-extraction" type="button">Review in visit form</button><button class="text-button" data-action="clear-ai" type="button">Clear result</button>';
-  return `<div class="ai-result"><div class="result-header"><div><p class="eyebrow accent">${applied ? 'Fields filled below' : 'Review suggestions'}</p><h3>${applied ? 'Check the visit details' : result.quality?.is_confirmable ? 'The note is ready to review' : 'A few details still need your input'}</h3></div><span class="confidence-pill">${applied ? 'Review now' : result.quality?.is_confirmable ? 'Good coverage' : 'Needs review'}</span></div><div class="suggestions-grid">${rows}</div><div class="original-note"><span>Original note</span><p>${esc(result.original_note || state.aiNote)}</p></div><div class="result-actions">${actions}</div></div>`;
+  return `<div class="ai-result"><div class="result-header"><div><p class="eyebrow accent">${applied ? 'AI values applied' : 'AI proposal'}</p><h3>${applied ? 'Check the visit details' : result.quality?.is_confirmable ? 'The note is ready to review' : 'A few details still need your input'}</h3></div><span class="confidence-pill">${applied ? 'Review now' : result.quality?.is_confirmable ? 'Good coverage' : 'Needs review'}</span></div><div class="suggestions-grid">${rows}</div><div class="original-note"><span>Original note</span><p>${esc(result.original_note || state.aiNote)}</p></div><div class="result-actions">${actions}</div></div>`;
 }
 
 function recentRows(records) {
@@ -273,9 +309,13 @@ function render() {
   document.querySelectorAll('.primary-nav, .mobile-nav').forEach((nav) => { nav.innerHTML = navMarkup(); });
   $('#main').innerHTML = state.route === 'dashboard' ? dashboardView() : state.route === 'visit' ? visitView() : state.route === 'records' ? recordsView() : state.route === 'reports' ? reportsView() : settingsView();
   $('#pending').textContent = pendingCount();
-  $('#connection').innerHTML = `<span class="status-dot ${state.serverOnline ? 'online' : ''}"></span>${state.serverOnline ? 'Online' : 'Offline-ready'}`;
+  const connection = $('#connection');
+  if (connection) connection.outerHTML = connectionMarkup();
   $('#sidebar-status').textContent = state.serverOnline ? 'Online services ready' : 'Local-first workspace';
   bindViewEvents();
+  if (state.route === 'visit' && state.captureMode === 'speak' && state.aiHasAnalyzed) {
+    window.requestAnimationFrame(() => $('#visit-error-summary')?.focus({ preventScroll: false }));
+  }
 }
 
 function setRoute(route) {
@@ -283,6 +323,7 @@ function setRoute(route) {
   if (location.hash !== `#${route}`) history.replaceState(null, '', `#${route}`);
   if (route !== 'visit') state.listening = false;
   render();
+  window.requestAnimationFrame(() => $('#main')?.focus({ preventScroll: true }));
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -524,6 +565,8 @@ function updateVisitFieldFeedback(form) {
   const showIssues = (state.captureMode === 'speak' && state.aiHasAnalyzed) || Boolean(duplicateVisit(state.current || emptyRecord()));
   const issues = showIssues ? fieldIssueMap(state.current || emptyRecord()) : {};
   form.querySelectorAll('[name]').forEach((field) => {
+    if (!field.id) field.id = `visit-${field.name}`;
+    field.closest('label')?.setAttribute('for', field.id);
     const label = field.closest('label');
     if (!label) return;
     const message = issues[field.name];
@@ -554,9 +597,11 @@ function updateVisitFieldFeedback(form) {
       summary.className = 'visit-error-summary';
       summary.setAttribute('role', 'alert');
       summary.setAttribute('aria-live', 'polite');
+      summary.tabIndex = -1;
       form.querySelector('#capture-mode')?.after(summary);
     }
-    summary.innerHTML = `<strong>Needs attention</strong><span>${messages.length} field${messages.length === 1 ? '' : 's'} still need your input before confirmation.</span>`;
+    const firstField = Object.keys(issues)[0];
+    summary.innerHTML = `<strong>Needs attention</strong><span>${messages.length} field${messages.length === 1 ? '' : 's'} still need your input before confirmation. <a href="#visit-${esc(firstField)}">Review the first one</a></span>`;
   } else {
     summary?.remove();
   }
@@ -571,6 +616,8 @@ function enhanceVisitAssistant(form) {
   const headings = form.querySelectorAll('.form-card-heading h3');
   if (headings[0]) headings[0].textContent = 'Visit details';
   if (headings[1]) headings[1].textContent = 'Observation note';
+  const formVoice = form.querySelector('#form-voice');
+  if (formVoice) formVoice.innerHTML = `${micIcon()}<span>${state.listening ? 'Listening…' : 'Speak note'}</span>`;
   const requiredNote = form.querySelector('.required-note');
   if (requiredNote) requiredNote.textContent = 'Complete what you know';
   const water = form.querySelector('select[name="water_source"]');
@@ -635,6 +682,13 @@ function bindViewEvents() {
     form.addEventListener('change', refreshVisitState);
     form.addEventListener('blur', refreshVisitState, true);
   }
+  document.querySelectorAll('label').forEach((label) => {
+    const field = label.querySelector('input, select, textarea');
+    if (field) {
+      if (!field.id) field.id = field.name ? `field-${field.name}` : `field-${Math.random().toString(16).slice(2)}`;
+      label.setAttribute('for', field.id);
+    }
+  });
   const note = $('#ai-note'); if (note) note.addEventListener('input', () => { state.aiNote = note.value; });
   $('#analyze')?.addEventListener('click', analyzeNote); $('#ai-voice')?.addEventListener('click', () => startVoice('assistant')); $('#form-voice')?.addEventListener('click', () => startVoice('form')); $('#sync')?.addEventListener('click', syncRecords);
 }
