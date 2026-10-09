@@ -4,7 +4,9 @@
 
 **Less time typing. More time caring.**
 
-An offline household outreach workspace for synthetic-data demonstrations. Capture visits on a phone, review AI extraction, confirm records, synchronize with a team server, and export supervisor reports.
+FieldHealth AI is a mobile-friendly community outreach workspace. A worker can record a fictional household visit outside, save it without connectivity, review a structured AI draft when the model service is reachable, and confirm the visit for supervisor reporting.
+
+The workflow includes offline drafts, required-field checks, a visit register, administrative follow-ups, a dashboard, and CSV / JSON exports. The model organizes observations; the worker checks the result. This prototype handles administrative field reporting rather than diagnosis or treatment.
 
 
 ## Run locally
