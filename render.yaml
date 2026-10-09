@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: fieldhealth-ai
+    runtime: python
+    plan: starter
+    buildCommand: python -m compileall -q server.py
+    startCommand: python server.py
+    healthCheckPath: /api/health
+    disk:
+      name: fieldhealth-records
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: DB_PATH
+        value: /var/data/fieldhealth.db
+      - key: APP_TOKEN
+        generateValue: true
+      - key: AI_PROVIDER
+        value: backboard
+      - key: BACKBOARD_API_KEY
+        sync: false
+      - key: BACKBOARD_PROVIDER
+        sync: false
+      - key: BACKBOARD_MODEL
+        sync: false
