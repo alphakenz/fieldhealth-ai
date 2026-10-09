@@ -24,6 +24,7 @@ const state = {
   listening: false,
   installPrompt: null,
   serverOnline: false,
+  syncConflict: null,
   lastError: ''
 };
 
@@ -125,7 +126,12 @@ async function api(path, options = {}) {
   const response = await fetch(path, { ...options, headers });
   let body = {};
   try { body = await response.json(); } catch { body = {}; }
-  if (!response.ok) throw new Error(body.error || (response.status === 401 ? 'Enter the demo access code in Settings.' : 'The service is unavailable right now.'));
+  if (!response.ok) {
+    const error = new Error(body.error || (response.status === 401 ? 'Enter the demo access code in Settings.' : 'The service is unavailable right now.'));
+    error.status = response.status;
+    error.data = body;
+    throw error;
+  }
   return body;
 }
 
@@ -170,7 +176,7 @@ function navIcon(name) {
 }
 
 function navMarkup() {
-  const items = [['dashboard', 'Today', 'today'], ['visit', 'New visit', 'visit'], ['records', 'Records', 'records'], ['settings', 'More', 'more']];
+  const items = [['dashboard', 'Today', 'today'], ['visit', 'New visit', 'visit'], ['records', 'Records', 'records'], ['settings', 'Settings', 'more']];
   return items.map(([route, label, icon]) => `<a class="nav-link ${state.route === route ? 'active' : ''}" href="#${route}" data-route="${route}">${navIcon(icon)}<span>${label}</span></a>`).join('');
 }
 
@@ -224,6 +230,18 @@ function recentRows(records) {
   return `<div class="recent-list">${records.map((record) => `<button class="recent-row" data-action="edit-record" data-id="${esc(record.id)}" type="button"><span class="record-status ${record.status}"></span><span class="recent-main"><strong>${esc(record.household_code || 'Uncoded household')}</strong><small>${dateLabel(record.updated_at)} · ${record.households_visited || 0} household${Number(record.households_visited) === 1 ? '' : 's'}</small></span><span class="row-state">${record.status === 'confirmed' ? 'Confirmed' : 'Draft'}<span aria-hidden="true">›</span></span></button>`).join('')}</div>`;
 }
 
+function displayLabel(value) {
+  return String(value || 'Not recorded').replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function syncConflictMarkup() {
+  const conflict = state.syncConflict;
+  if (!conflict) return '';
+  const local = conflict.local || {};
+  const server = conflict.server || {};
+  return `<section class="card sync-conflict" role="alert" aria-labelledby="sync-conflict-title"><p class="eyebrow accent">Sync needs a choice</p><h3 id="sync-conflict-title">This visit changed in two places</h3><p class="muted">Choose which version to keep. Your local version stays on this device until you decide.</p><div class="conflict-compare"><div><strong>Your device</strong><span>${esc(local.household_code || 'Uncoded')} · ${esc(local.note || 'No note')}</span></div><div><strong>Online copy</strong><span>${esc(server.household_code || 'Uncoded')} · ${esc(server.note || 'No note')}</span></div></div><div class="conflict-actions"><button class="button secondary" data-action="use-server-conflict" type="button">Use online copy</button><button class="button primary" data-action="keep-local-conflict" type="button">Keep my copy</button></div></section>`;
+}
+
 function visitView() {
   const record = normalizeRecord(state.current || emptyRecord());
   const issues = qualityIssues(record);
@@ -232,7 +250,8 @@ function visitView() {
 }
 
 function recordsView() {
-  return `<section class="page-intro"><div><p class="eyebrow accent">Your records</p><h2>Visit register</h2><p class="lede">Everything captured on this device, including drafts waiting for sync.</p></div><button class="button primary" data-action="new-visit" type="button">New visit</button></section>${state.records.length ? `<section class="card table-card"><div class="table-wrap"><table><thead><tr><th>Household</th><th>Households</th><th>People</th><th>Water</th><th>Status</th><th>Updated</th></tr></thead><tbody>${state.records.map((record) => `<tr data-action="edit-record" data-id="${esc(record.id)}" tabindex="0"><td><strong>${esc(record.household_code || 'Uncoded')}</strong></td><td>${record.households_visited || 0}</td><td>${record.people_present ?? '—'}</td><td>${esc(record.water_source || '—')}</td><td><span class="table-status ${record.status}">${record.status === 'confirmed' ? 'Confirmed' : 'Draft'}</span></td><td>${dateLabel(record.updated_at)}</td></tr>`).join('')}</tbody></table></div></section>` : '<section class="empty-card"><div class="empty-icon">+</div><h2>No visits yet</h2><p>Saved visits will appear here and can be exported as CSV.</p></section>'}`;
+  const cards = state.records.map((record) => `<button class="record-card" data-action="edit-record" data-id="${esc(record.id)}" type="button"><span class="record-card-heading"><strong>${esc(record.household_code || 'Uncoded household')}</strong><span class="table-status ${record.status}">${record.status === 'confirmed' ? 'Confirmed' : 'Draft'}</span></span><span class="record-card-details"><span>${record.households_visited || 0} household${Number(record.households_visited) === 1 ? '' : 's'}</span><span>${record.people_present ?? '—'} people</span><span>${esc(displayLabel(record.water_source))}</span></span><span class="record-card-footer"><span>${dateLabel(record.updated_at)}</span><span aria-hidden="true">Open ›</span></span></button>`).join('');
+  return `${syncConflictMarkup()}<section class="page-intro"><div><p class="eyebrow accent">Your records</p><h2>Visit register</h2><p class="lede">Everything captured on this device, including drafts waiting for sync.</p></div><button class="button primary" data-action="new-visit" type="button">New visit</button></section>${state.records.length ? `<section class="records-list" aria-label="Saved visits">${cards}</section>` : '<section class="empty-card"><div class="empty-icon">+</div><h2>No visits yet</h2><p>Saved visits will appear here and can be exported as CSV.</p></section>'}`;
 }
 
 function reportsView() {
@@ -245,11 +264,11 @@ function reportsView() {
 }
 
 function settingsView() {
-  return `<section class="page-intro"><div><p class="eyebrow accent">More</p><h2>Workspace settings</h2><p class="lede">Use the public demo with fictional records.</p></div></section><section class="settings-grid"><div class="card"><p class="eyebrow accent">Demo access</p><h3>Connect online services</h3><p class="muted">The demo access code enables synchronization and the AI assistant. It stays in this browser tab’s session.</p><label>Demo access code<input id="demo-code" type="password" value="${esc(token())}" placeholder="Enter the code provided for this demo" autocomplete="off"></label><div class="form-actions"><button class="button primary" data-action="save-token" type="button">Save demo code</button><button class="button secondary" data-action="clear-token" type="button">Clear</button></div></div><div class="card"><p class="eyebrow">Install</p><h3>Keep FieldHealth on your phone</h3><p class="muted">Install the PWA for a focused field workspace. Forms and records remain available when you are offline.</p><button id="install-app" class="button secondary" data-action="install-app" type="button" ${state.installPrompt ? '' : 'disabled'}>${state.installPrompt ? 'Install FieldHealth' : 'Install option appears in a supported browser'}</button></div><div class="card"><p class="eyebrow">Demo safety</p><h3>Fictional records only</h3><p class="muted">This public demo is for fictional records only. Do not enter names, phone numbers, or medical details.</p><div class="privacy-callout"><span>i</span><p>AI suggestions are not a diagnosis or a decision. A field worker reviews every suggestion before a visit is confirmed.</p></div></div><div class="card"><p class="eyebrow">Explore</p><h3>Reports and exports</h3><p class="muted">Review totals and download your visit register as a CSV file.</p><button class="button secondary" data-route="reports" type="button">Open reports</button></div></section>`;
+  return `<section class="page-intro"><div><p class="eyebrow accent">Settings</p><h2>Workspace settings</h2><p class="lede">Use the public demo with fictional records.</p></div></section><section class="settings-grid"><div class="card"><p class="eyebrow accent">Demo access</p><h3>Connect online services</h3><p class="muted">The demo access code enables synchronization and the AI assistant. It stays in this browser tab’s session.</p><label>Demo access code<input id="demo-code" type="password" value="${esc(token())}" placeholder="Enter the code provided for this demo" autocomplete="off"></label><div class="form-actions"><button class="button primary" data-action="save-token" type="button">Save demo code</button><button class="button secondary" data-action="clear-token" type="button">Clear</button></div></div><div class="card"><p class="eyebrow">Install</p><h3>Keep FieldHealth on your phone</h3><p class="muted">Install the PWA for a focused field workspace. Forms and records remain available when you are offline.</p><button id="install-app" class="button secondary" data-action="install-app" type="button" ${state.installPrompt ? '' : 'disabled'}>${state.installPrompt ? 'Install FieldHealth' : 'Install option appears in a supported browser'}</button></div><div class="card"><p class="eyebrow">Demo safety</p><h3>Fictional records only</h3><p class="muted">This public demo is for fictional records only. Do not enter names, phone numbers, or medical details.</p><div class="privacy-callout"><span>i</span><p>AI suggestions are not a diagnosis or a decision. A field worker reviews every suggestion before a visit is confirmed.</p></div></div><div class="card"><p class="eyebrow">Explore</p><h3>Reports and exports</h3><p class="muted">Review totals and download your visit register as a CSV file.</p><button class="button secondary" data-route="reports" type="button">Open reports</button></div></section>`;
 }
 
 function render() {
-  const titles = { dashboard: 'Today', visit: 'New visit', records: 'Records', reports: 'Reports', settings: 'More' };
+  const titles = { dashboard: 'Today', visit: 'New visit', records: 'Records', reports: 'Reports', settings: 'Settings' };
   $('#page-title').textContent = titles[state.route] || 'Today';
   document.querySelectorAll('.primary-nav, .mobile-nav').forEach((nav) => { nav.innerHTML = navMarkup(); });
   $('#main').innerHTML = state.route === 'dashboard' ? dashboardView() : state.route === 'visit' ? visitView() : state.route === 'records' ? recordsView() : state.route === 'reports' ? reportsView() : settingsView();
@@ -387,7 +406,37 @@ async function syncRecords() {
     for (const record of remote.visits || []) await localPut({ ...record, synced: true });
     state.records = await localGetAll();
     setNotice('Records synced successfully.', 'success');
-  } catch (error) { setNotice(error.message, 'warning'); }
+  } catch (error) {
+    if (error.status === 409 && error.data?.server_record) {
+      const server = normalizeRecord(error.data.server_record);
+      const local = state.records.find((record) => record.id === server.id) || null;
+      state.syncConflict = { local, server };
+      setNotice('A visit changed online. Choose which copy to keep in Records.', 'warning');
+    } else {
+      setNotice(error.message, 'warning');
+    }
+  }
+  render();
+}
+
+async function resolveSyncConflict(choice) {
+  const conflict = state.syncConflict;
+  if (!conflict) return;
+  const server = conflict.server;
+  const local = conflict.local;
+  try {
+    if (choice === 'server') {
+      await localPut({ ...server, synced: true });
+      setNotice('The online copy is now saved on this device.', 'success');
+    } else if (local) {
+      await localPut({ ...local, server_revision: server.server_revision, synced: false, updated_at: nowIso() });
+      setNotice('Your copy is kept and ready to sync again.', 'success');
+    }
+    state.syncConflict = null;
+    state.records = await localGetAll();
+  } catch (error) {
+    setNotice(error.message || 'The sync choice could not be saved.', 'warning');
+  }
   render();
 }
 
@@ -503,6 +552,8 @@ function updateVisitFieldFeedback(form) {
       summary = document.createElement('div');
       summary.id = 'visit-error-summary';
       summary.className = 'visit-error-summary';
+      summary.setAttribute('role', 'alert');
+      summary.setAttribute('aria-live', 'polite');
       form.querySelector('#capture-mode')?.after(summary);
     }
     summary.innerHTML = `<strong>Needs attention</strong><span>${messages.length} field${messages.length === 1 ? '' : 's'} still need your input before confirmation.</span>`;
@@ -530,6 +581,15 @@ function enhanceVisitAssistant(form) {
     water.append(option);
   }
   if (water && state.current?.water_source) water.value = state.current.water_source;
+  const followUp = form.querySelector('[name="follow_up_type"]');
+  if (followUp && followUp.tagName === 'INPUT') {
+    const select = document.createElement('select');
+    select.name = 'follow_up_type';
+    select.innerHTML = '<option value="">Choose one</option><option value="health_education">Health education</option><option value="administrative">Administrative</option><option value="other">Other</option>';
+    select.value = ['health_education', 'administrative', 'other'].includes(state.current?.follow_up_type) ? state.current.follow_up_type : '';
+    followUp.replaceWith(select);
+  }
+  form.querySelector('.assistant-tip')?.remove();
   if (state.records.some((record) => record.id === state.current?.id) && !form.querySelector('#delete-visit')) {
     const actions = form.querySelector('.form-actions');
     const submit = actions?.querySelector('button[type="submit"]');
@@ -561,12 +621,14 @@ function bindViewEvents() {
   document.querySelectorAll('[data-action="export-csv"]').forEach((element) => element.addEventListener('click', exportCsv));
   document.querySelectorAll('[data-action="use-extraction"]').forEach((element) => element.addEventListener('click', applyExtraction));
   document.querySelectorAll('[data-action="clear-ai"]').forEach((element) => element.addEventListener('click', () => { state.aiResult = null; render(); }));
-  document.querySelectorAll('[data-action="delete-visit"]').forEach((element) => element.addEventListener('click', deleteCurrent));
+  document.querySelectorAll('[data-action="use-server-conflict"]').forEach((element) => element.addEventListener('click', () => resolveSyncConflict('server')));
+  document.querySelectorAll('[data-action="keep-local-conflict"]').forEach((element) => element.addEventListener('click', () => resolveSyncConflict('local')));
   document.querySelectorAll('[data-action="save-token"]').forEach((element) => element.addEventListener('click', async () => { const value = $('#demo-code')?.value.trim() || ''; if (value) sessionStorage.setItem(DEMO_CODE_KEY, value); else sessionStorage.removeItem(DEMO_CODE_KEY); state.serverOnline = false; try { await api('/api/health'); state.serverOnline = true; setNotice('Demo code saved for this session.', 'success'); } catch (error) { setNotice(error.message, 'warning'); } render(); }));
   document.querySelectorAll('[data-action="clear-token"]').forEach((element) => element.addEventListener('click', () => { sessionStorage.removeItem(DEMO_CODE_KEY); state.serverOnline = false; setNotice('Demo access cleared.', 'info'); render(); }));
   document.querySelectorAll('[data-action="install-app"]').forEach((element) => element.addEventListener('click', installApp));
   const form = $('#visit-form'); if (form) {
     enhanceVisitAssistant(form);
+    form.addEventListener('click', (event) => { if (event.target.closest('[data-action="delete-visit"]')) deleteCurrent(); });
     form.addEventListener('submit', saveCurrent);
     const refreshVisitState = (event) => { if (event.target?.name) state.manualFields.add(event.target.name); updateCurrentFromForm(form); updateVisitActionState(form); };
     form.addEventListener('input', refreshVisitState);
@@ -588,10 +650,14 @@ window.addEventListener('beforeinstallprompt', (event) => { event.preventDefault
 window.addEventListener('hashchange', () => { const route = location.hash.slice(1); if (['dashboard', 'visit', 'records', 'reports', 'settings'].includes(route) && route !== state.route) setRoute(route); });
 
 (async function boot() {
-  document.body.innerHTML = shellMarkup();
-  await seedDemo();
-  render();
-  await refreshHealth();
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
-  if (location.hash) window.dispatchEvent(new Event('hashchange'));
+  try {
+    document.body.innerHTML = shellMarkup();
+    await seedDemo();
+    render();
+    await refreshHealth();
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+    if (location.hash) window.dispatchEvent(new Event('hashchange'));
+  } catch (error) {
+    document.body.innerHTML = `<main class="boot-error"><h1>FieldHealth could not start</h1><p>Your saved information was not changed. Refresh the page or use a browser with offline storage enabled.</p><button class="button primary" type="button" onclick="location.reload()">Refresh FieldHealth</button></main>`;
+  }
 })();

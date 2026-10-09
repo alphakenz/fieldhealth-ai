@@ -14,11 +14,11 @@ export APP_TOKEN='choose-a-long-random-team-key'
 python server.py
 ```
 
-Open http://localhost:8000. In **More → Demo access**, enter the demo access code configured for the server. The app starts with two fictional examples so judges can explore the dashboard immediately. The browser must open the app online once before offline reload works. Offline capture works without a demo access code; server sync and inference require one.
+Open http://localhost:8000. In **Settings → Demo access**, enter the demo access code configured for the server. The app starts with two fictional examples so judges can explore the dashboard immediately. The browser must open the app online once before offline reload works. Offline capture works without a demo access code; server sync and inference require one.
 
 ## Enable genuine AI extraction
 
-No fake AI or heuristic fallback is supplied. If inference is unconfigured, the interface reports that and keeps manual capture available.
+The preferred path is genuine model extraction. If a model response is unavailable or malformed, the server can recover only explicit facts that are plainly present in the note; it never invents missing values. If inference is unconfigured, the interface reports that and keeps manual capture available.
 
 ### Local open-weight Gemma through Ollama
 
@@ -57,11 +57,11 @@ Expected administrative facts: HH-014, five present, unknown water source, follo
 
 - IndexedDB stores drafts, confirmed visits, AI assessments, and pending sync records.
 - Service worker caches the interface for offline reload after first use.
-- The mobile-first PWA separates Today, New visit, Records, and More, with a prominent AI Field Assistant.
+- The mobile-first PWA separates Today, New visit, Records, Reports, and Settings, with a prominent AI Field Assistant.
 - Household count and people-present count are separate fields, so “five households” is never confused with “five people.”
 - AI proposals remain editable and separate from the original observation.
 - Confirmed records contribute to reporting; drafts are excluded from report exports.
-- UUIDs and revision checks provide idempotent retries and explicit conflict resolution.
+- UUIDs and revision checks provide idempotent retries and explicit conflict resolution. Duplicate household/date visits are blocked, and saved visits can be deleted.
 - Supervisor dashboard shows real local counts and follow-up status.
 - CSV escapes spreadsheet formula prefixes; JSON backups include all local records.
 - Shared team-key protection covers API records and inference. Key is kept in tab session storage; provider keys remain server-side.
@@ -80,7 +80,7 @@ For a UI-only public demonstration, use `AI_PROVIDER=none`; describe that limita
 python -m unittest discover -s tests -v
 ```
 
-Tests cover idempotent sync, conflict detection, confirmation requirements, strict extraction validation, and adapter payloads. Model adapter tests use mocked provider responses and do **not** prove model accuracy or live API connectivity.
+Tests cover idempotent sync, conflict detection, confirmation requirements, duplicate protection, deletion, strict extraction validation, and adapter payloads. Model adapter tests use mocked provider responses and do **not** prove model accuracy or live API connectivity.
 
 ## Architecture and boundaries
 

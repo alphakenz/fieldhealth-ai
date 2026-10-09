@@ -2,7 +2,7 @@
 
 ## Passed in the development environment
 
-- Eight Python unit tests: sync retry idempotency, conflict protection, confirmation completeness, strict extraction types, separate household and people counts, Ollama adapter, Backboard adapter, and refusal to invent results when inference is unconfigured.
+- Twelve Python unit tests: sync retry idempotency, conflict protection, confirmation completeness, duplicate protection, deletion, strict extraction types, separate household and people counts, Ollama adapter, Backboard adapter, and refusal to invent results when inference is unconfigured.
 - In-process HTTP smoke checks: invalid team key rejected; record persisted; identical retry returned revision 1; stale edit returned HTTP 409; unconfigured inference returned HTTP 503; synthetic-data consent gate returned HTTP 422; interface assets returned HTTP 200.
 - JavaScript syntax checks for app-v2.js and sw.js.
 - Python compilation check.

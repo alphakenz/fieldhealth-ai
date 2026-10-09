@@ -253,7 +253,7 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path == '/':
             self.path = '/index-v2.html'
-        if self.path=='/api/health': return self.reply(200,{'status':'ok','ai_provider':os.environ.get('AI_PROVIDER','none'),'model':os.environ.get('BACKBOARD_MODEL') if os.environ.get('AI_PROVIDER')=='backboard' else os.environ.get('OLLAMA_MODEL','gemma3:1b') if os.environ.get('AI_PROVIDER')=='ollama' else None})
+        if self.path=='/api/health': return self.reply(200,{'status':'ok'})
         if self.path=='/api/visits':
             if self.authorized(): self.reply(200,{'visits':all_visits()})
             return
@@ -285,7 +285,10 @@ class Handler(SimpleHTTPRequestHandler):
             if not isinstance(payload,dict): raise ValueError('Request must be an object')
             if self.path=='/api/visits': return self.reply(200,{'visit':save_visit(payload)})
             if payload.get('synthetic_data_confirmed') is not True: raise ValueError('Confirm synthetic data before using AI')
-            self.reply(200,extract(payload.get('note')))
+            result = extract(payload.get('note'))
+            result.pop('model', None)
+            result.pop('provider', None)
+            self.reply(200,result)
         except DuplicateRecord as e: self.reply(409,{'error':f"A visit for {e.record.get('household_code')} already exists for {e.record.get('visit_date')}.",'duplicate_record':e.record})
         except Conflict as e: self.reply(409,{'error':'Record changed on another device. Review both versions.','server_record':e.record})
         except (ValueError,KeyError,TypeError) as e: self.reply(422,{'error':str(e)[:200]})
