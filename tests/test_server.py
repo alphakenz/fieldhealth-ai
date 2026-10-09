@@ -12,7 +12,7 @@ import server
 class WorkflowTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();server.DB_PATH=self.tmp.name+'/visits.db'
-        self.visit={'id':'195a2e17-966e-4a31-b8e5-e1a92ce836ec','household_code':'HH-014','people_present':5,'water_source':'borehole','follow_up_required':True,'follow_up_type':'health_education','community':'Fictional Kuje','note':'Five people present.','visit_date':'2026-10-09','activity':'household_visit','status':'confirmed','follow_up_status':'open','server_revision':0,'sync_state':'pending'}
+        self.visit={'id':'195a2e17-966e-4a31-b8e5-e1a92ce836ec','household_code':'HH-014','households_visited':1,'people_present':5,'water_source':'borehole','follow_up_required':True,'follow_up_type':'health_education','community':'Fictional Kuje','note':'Five people present.','visit_date':'2026-10-09','activity':'household_visit','status':'confirmed','follow_up_status':'open','server_revision':0,'sync_state':'pending'}
     def tearDown(self):self.tmp.cleanup()
     def test_sync_idempotency_and_conflict(self):
         first=server.save_visit(self.visit);self.assertEqual(first['server_revision'],1)
@@ -29,6 +29,10 @@ class WorkflowTests(unittest.TestCase):
         with self.assertRaises(ValueError):server.validate_extraction(extracted)
         extracted['people_present']=5;extracted['diagnosis']='malaria'
         with self.assertRaises(ValueError):server.validate_extraction(extracted)
+    def test_households_and_people_are_separate_counts(self):
+        extracted={k:self.visit[k] for k in server.FIELDS}
+        extracted['households_visited']=5;extracted['people_present']=2
+        self.assertEqual(server.validate_extraction(extracted)['households_visited'],5)
     def test_ollama_adapter_preserves_unknowns(self):
         draft={k:self.visit[k] for k in server.FIELDS};draft['water_source']=None
         with patch.dict(os.environ,{'AI_PROVIDER':'ollama','OLLAMA_MODEL':'gemma3:1b'}),patch('server.post_json',return_value={'message':{'content':json.dumps(draft)}}) as call:

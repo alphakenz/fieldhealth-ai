@@ -14,7 +14,7 @@ export APP_TOKEN='choose-a-long-random-team-key'
 python server.py
 ```
 
-Open http://localhost:8000. In **Settings**, enter that team key. You can load eight fictional examples or create your own. The browser must open the app online once before offline reload works. Offline capture works without a team key; server sync and inference require one.
+Open http://localhost:8000. In **More → Demo access**, enter the demo access code configured for the server. The app starts with two fictional examples so judges can explore the dashboard immediately. The browser must open the app online once before offline reload works. Offline capture works without a demo access code; server sync and inference require one.
 
 ## Enable genuine AI extraction
 
@@ -57,7 +57,8 @@ Expected administrative facts: HH-014, five present, unknown water source, follo
 
 - IndexedDB stores drafts, confirmed visits, AI assessments, and pending sync records.
 - Service worker caches the interface for offline reload after first use.
-- Household form checks completeness and possible same-day duplicates.
+- The mobile-first PWA separates Today, New visit, Records, and More, with a prominent AI Field Assistant.
+- Household count and people-present count are separate fields, so “five households” is never confused with “five people.”
 - AI proposals remain editable and separate from the original observation.
 - Confirmed records contribute to reporting; drafts are excluded from report exports.
 - UUIDs and revision checks provide idempotent retries and explicit conflict resolution.
@@ -69,7 +70,7 @@ Expected administrative facts: HH-014, five present, unknown water source, follo
 
 Push the **contents of this folder** to a new GitHub repository, then create a Render Blueprint from `render.yaml`. The blueprint uses a paid web service with a 1 GB persistent disk; review the quoted charge and your available promotional credit before activating it. Free ephemeral storage is unsuitable for this SQLite implementation.
 
-Set `BACKBOARD_API_KEY`, `BACKBOARD_PROVIDER`, and `BACKBOARD_MODEL` in Render. Copy the generated `APP_TOKEN` from Render's environment settings into the app's Settings. Do not put the team key in the DEV article or public demo video. Keep a separate synthetic demo workspace.
+Set `BACKBOARD_API_KEY`, `BACKBOARD_PROVIDER`, and `BACKBOARD_MODEL` in Render. Copy the generated demo `APP_TOKEN` from Render's environment settings into the app's Settings. Use a separate synthetic demo workspace and do not expose any private access token.
 
 For a UI-only public demonstration, use `AI_PROVIDER=none`; describe that limitation explicitly. To demonstrate eligible AI, configure and run the genuine model adapter and save input/output evidence. No Render deployment or public GitHub repository has been created by this package.
 
