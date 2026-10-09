@@ -16,32 +16,25 @@ A mobile-friendly, offline-first workspace for **administrative** field reportin
 |---|---|---|
 | 1 | `01-product-requirements.md` | Scope, FR/NFR IDs, business rules, acceptance criteria |
 | 2 | `02-technical-requirements.md` | Stack, offline/sync protocol, API, AI adapters, security |
-| 3 | `03-application-flow.md` | Screens S-01…S-14, journeys, failure paths |
-| 4 | `04-design-brief.md` | Tokens, components, accessibility |
-| 5 | `05-database-schema.md` | SQLite schema, enums, export columns |
-| 6 | `06-implementation-plan.md` | Phases, TASK-001…038, verification, release checklist |
-| 7 | `07-vibe-coding-master-prompt.md` | Copy-ready prompt for an AI coding agent |
+| 3 | `03-application-flow.md` | Screens, journeys, and failure paths |
+| 4 | `04-design-brief.md` | Tokens, components, and accessibility |
+| 5 | `05-database-schema.md` | SQLite schema, enums, and export columns |
+| 6 | `06-implementation-plan.md` | Phases, verification, and release checklist |
+| 7 | `07-vibe-coding-master-prompt.md` | Original prompt used to guide development |
 | App. | `submission.md` | Hackathon submission write-up |
 | App. | `verification.md` | Development verification record and remaining checks |
 
-Suggested use: judges can start with `submission.md` and `verification.md`, then use files 1–6 for implementation detail. File 7 is the original master prompt used to guide development.
+Suggested use: judges can start with `submission.md` and `verification.md`, then use files 1–6 for implementation detail.
 
-## Key assumptions (please review)
+## Current implementation files
 
-1. Python standard-library HTTP service with `sqlite3` (backend); vanilla JavaScript, no build step (frontend).
-2. The PWA stores drafts and visits locally first; online sync is available when a connection returns.
-3. Confirmation requires complete visit fields and is reviewed by the worker before reporting.
-4. Household code pattern `HH-####` (synthetic, configurable).
-5. The hackathon demo supports public access through `PUBLIC_DEMO=true`; private deployments can use the generated `APP_TOKEN`.
-6. Single-instance deployment; SQLite on local disk; first app load requires network.
-7. Backboard request format and model eligibility are **unverified** here and must be checked against current provider documentation.
+The running MVP uses `server.py` and the following files in `public/`: `index.html`, `app.js`, `styles.css`, `sw.js`, `manifest.webmanifest`, and `icon.svg`.
 
-## Evidence still to collect
+## Key boundaries
 
-Before final submission, record the exact provider and model used, model license, live inference evidence, observed extraction results, verified Render URL, and the outdoor demonstration. The [verification record](verification.md) separates checks already passed from checks that still require a real browser, device, provider, or deployment.
-
-## Open questions
-
-- Which exact open-weight model and provider will be documented in the final submission?
-- What real-device and outdoor evidence will be included?
-- May supervisors see raw notes in the register? (default: yes, data is synthetic)
+- The application handles administrative field reporting, not diagnosis or treatment.
+- Records are synthetic for the public demo; do not enter real household or patient data.
+- The PWA stores drafts and visits locally first and syncs when a connection returns.
+- The hackathon demo supports public access through `PUBLIC_DEMO=true`; private deployments can use `APP_TOKEN`.
+- Render uses a single instance with SQLite on a persistent disk.
+- AI extraction requires a configured provider when online; offline capture remains available without inference.

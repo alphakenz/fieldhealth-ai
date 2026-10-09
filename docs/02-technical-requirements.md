@@ -83,11 +83,11 @@ The browser talks only to the FastAPI app. Provider credentials exist only in th
 | `audit.py` | Audit log writer |
 | `cli.py` | `create-user`, `seed-synthetic`, `migrate`, `eval-run` |
 
-### Frontend (`frontend/`)
+### Frontend (`public/`)
 | Module | Responsibility |
 |---|---|
 | `index.html`, `manifest.webmanifest`, `sw.js` | Shell, install metadata, offline cache |
-| `js/app.js`, `router.js` | Hash router, view lifecycle |
+| `app.js`, `styles.css` | Hash router, view lifecycle, responsive interface, and field workflows |
 | `js/db.js` | IndexedDB access: `visits`, `outbox`, `aiDrafts`, `meta` |
 | `js/sync.js` | Outbox drain, conflict capture, backoff, online/offline events |
 | `js/api.js` | `fetch` wrapper (CSRF, error mapping) |

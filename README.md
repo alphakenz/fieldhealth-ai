@@ -4,9 +4,6 @@
 
 An offline household outreach workspace for synthetic-data demonstrations. Capture visits on a phone, review AI extraction, confirm records, synchronize with a team server, and export supervisor reports.
 
-## Judge guide
-
-Start with the [documentation hub](docs/README.md), then review the [submission write-up](docs/submission.md) and [verification record](docs/verification.md). The detailed product, technical, flow, design, schema, and implementation documents are linked from the hub.
 
 ## Run locally
 

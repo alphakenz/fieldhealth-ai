@@ -1,49 +1,730 @@
-const $=s=>document.querySelector(s), esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const today=()=>new Date().toLocaleDateString('en-CA'), fields=['household_code','people_present','water_source','follow_up_required','follow_up_type'];
-let db, records=[], current=null, aiDraft=null, serverHealth=null, syncBusy=false;
-function toast(s){$('#notice').textContent=s;$('#notice').classList.add('visible');clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('#notice').classList.remove('visible'),6500)}
-async function openDB(){return new Promise((resolve,reject)=>{const r=indexedDB.open('fieldhealth-v1',1);r.onupgradeneeded=()=>r.result.createObjectStore('visits',{keyPath:'id'});r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error)})}
-async function store(value){return new Promise((resolve,reject)=>{const t=db.transaction('visits','readwrite');t.objectStore('visits').put(value);t.oncomplete=resolve;t.onerror=()=>reject(t.error);t.onabort=()=>reject(t.error)})}
-async function reload(){records=await new Promise((resolve,reject)=>{const r=db.transaction('visits').objectStore('visits').getAll();r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error)});records.sort((a,b)=>b.visit_date.localeCompare(a.visit_date));updateStatus()}
-function issues(r){const out=[];for(const k of ['household_code','people_present','water_source','follow_up_required'])if(r[k]===null||r[k]===undefined||r[k]==='')out.push('Missing '+k.replaceAll('_',' '));if(r.follow_up_required===true&&!r.follow_up_type)out.push('Missing follow-up category');return out}
-function duplicate(r){return records.some(x=>x.id!==r.id&&x.household_code.toLowerCase()===r.household_code.toLowerCase()&&x.visit_date===r.visit_date)}
-function updateStatus(){$('#connection').textContent=navigator.onLine?'Device online':'Offline · capture ready';$('#connection').classList.toggle('offline',!navigator.onLine);$('#pending').textContent=records.filter(x=>x.sync_state!=='synced').length}
-async function api(path,body){const token=sessionStorage.getItem('fieldhealth-token')||'';const r=await fetch(path,{method:body?'POST':'GET',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:body?JSON.stringify(body):undefined,signal:AbortSignal.timeout(70000)});const data=await r.json();if(!r.ok){const e=new Error(data.error||'Request failed');e.status=r.status;e.data=data;throw e}return data}
-async function sync(){if(syncBusy)return;if(!navigator.onLine)return toast('Offline. Records remain saved on this device.');if(!sessionStorage.getItem('fieldhealth-token')){toast('Add the demo access code in Settings to sync records.');location.hash='settings';return}syncBusy=true;$('#sync').disabled=true;let sent=0,conflicts=0;try{for(const local of records.filter(r=>r.sync_state==='pending')){try{const result=await api('/api/visits',local);await store(result.visit);sent++}catch(e){if(e.status===409){await store({...local,sync_state:'conflict',conflict_record:e.data.server_record});conflicts++}else throw e}}
-const remote=await api('/api/visits');await reload();for(const v of remote.visits){const local=records.find(r=>r.id===v.id);if(!local||local.sync_state==='synced')await store(v)}await reload();toast(`${sent} record${sent===1?'':'s'} synced.${conflicts?' '+conflicts+' conflict(s) need review.':''}`);if(!location.hash.includes('visit'))render()}catch(e){await reload();toast(e.message||'Sync failed. Local records are safe.')}finally{syncBusy=false;$('#sync').disabled=false}}
-function tag(r){return r.sync_state==='conflict'?'<span class="tag warning">Sync conflict</span>':r.status==='confirmed'?'<span class="tag">Confirmed</span>':'<span class="tag blue">Draft</span>'}
-function heading(title,sub,action=''){return `<div class="page-heading"><div><h1>${title}</h1><p>${sub}</p></div>${action}</div>`}
-function table(list){return `<div class="table-wrap"><table><thead><tr><th>Household</th><th>Community</th><th>Visit date</th><th>Review</th><th>Follow-up</th><th>Storage</th><th></th></tr></thead><tbody>${list.length?list.map(r=>`<tr><td><strong>${esc(r.household_code)}</strong><div class="muted">${esc(r.activity.replaceAll('_',' '))}</div></td><td>${esc(r.community)}</td><td>${esc(r.visit_date)}</td><td>${tag(r)}</td><td>${r.follow_up_required?(r.follow_up_status==='completed'?'<span class="tag">Completed</span>':'<span class="tag warning">Open</span>'):'—'}</td><td><span class="tag neutral">${esc(r.sync_state)}</span></td><td><a class="button secondary" href="#visit/${r.id}">Review</a></td></tr>`).join(''):'<tr><td colspan="7" class="empty">No visits yet. Record your first field visit, or load fictional examples in Settings.</td></tr>'}</tbody></table></div>`}
-function dashboard(){const confirmed=records.filter(r=>r.status==='confirmed'),follow=records.filter(r=>r.follow_up_required&&r.follow_up_status==='open'),clean=records.filter(r=>issues(r).length===0),communities=new Set(records.map(r=>r.community)),pct=records.length?Math.round(clean.length/records.length*100):0;
-const days=Array.from({length:7},(_,i)=>{const d=new Date();d.setDate(d.getDate()-6+i);const key=d.toLocaleDateString('en-CA');return {key,label:d.toLocaleDateString('en-GB',{weekday:'short'}),n:records.filter(r=>r.visit_date===key).length}}),max=Math.max(1,...days.map(d=>d.n));
-$('#main').innerHTML=heading('Outreach overview','Your field activity, review queue, and next visits.','<a class="button" href="#visit">＋ New field visit</a>')+`<div class="metrics">${[['Household visits',records.length,'All records on this device','▤'],['Confirmed records',confirmed.length,'Reviewed and ready to report','✓'],['Open follow-ups',follow.length,'Administrative visits to complete','◷'],['Communities reached',communities.size,'Based on recorded visits','◎']].map(x=>`<div class="card"><span class="metric-icon">${x[3]}</span><div class="metric-label">${x[0]}</div><div class="metric-value">${x[1]}</div><div class="metric-foot">${x[2]}</div></div>`).join('')}</div>
-<div class="grid"><section class="card"><div class="panel-heading"><h2>Visits this week</h2><span class="tag neutral">Last 7 days</span></div><div class="chart" role="img" aria-label="Daily visit counts: ${days.map(d=>d.label+' '+d.n).join(', ')}">${days.map(d=>`<div class="bar-col"><span class="bar-count">${d.n}</span><div class="bar" style="height:${Math.max(2,d.n/max*125)}px"></div><span class="bar-label">${d.label}</span></div>`).join('')}</div></section><section class="card"><div class="panel-heading"><h2>Reporting quality</h2><span class="tag">Field checks</span></div><div class="quality-line"><span>Complete required fields</span><strong>${pct}%</strong></div><div class="progress"><span style="width:${pct}%"></span></div><div class="stat-row"><span>Needs information</span><strong>${records.length-clean.length}</strong></div><div class="stat-row"><span>Awaiting confirmation</span><strong>${records.length-confirmed.length}</strong></div><div class="stat-row"><span>Waiting to sync</span><strong>${records.filter(r=>r.sync_state!=='synced').length}</strong></div><a class="button ghost" href="#records">Review visit register</a></section></div>
-<section class="card"><div class="panel-heading"><h2>Recent household visits</h2><a class="muted" href="#records">View all visits</a></div>${table(records.slice(0,5))}</section><div class="grid"><section class="card"><div class="panel-heading"><h2>Upcoming follow-ups</h2><span class="tag warning">${follow.length} open</span></div><div class="small-list">${follow.length?follow.slice(0,4).map(r=>`<div class="list-item"><div><strong>${esc(r.household_code)}</strong><small>${esc(r.follow_up_type?.replaceAll('_',' ')||'Category needed')} · ${esc(r.community)}</small></div><a href="#visit/${r.id}" class="button secondary">${esc(r.due_date||'Set date')}</a></div>`).join(''):'<p class="muted">No outstanding follow-ups.</p>'}</div></section><section class="card"><h2>Ready for the field</h2><p class="muted">Save visits on this device without connectivity. Reconnect to sync records and request an AI draft.</p><div class="callout">Only use fictional household data in this prototype.</div><a href="#visit" class="button ghost">Record a visit</a></section></div>`}
-function options(vals,selected){return vals.map(([k,label])=>`<option value="${k}" ${String(selected??'')===k?'selected':''}>${label}</option>`).join('')}
-function visit(id){current=id?records.find(r=>r.id===id):null;if(id&&!current){location.hash='records';return}aiDraft=null;const r=current||{household_code:'',community:'',visit_date:today(),activity:'household_visit',people_present:null,water_source:null,follow_up_required:null,follow_up_type:null,note:'',due_date:'',follow_up_status:'open'};
-$('#main').innerHTML=heading(current?'Review household visit':'New field visit','Capture what happened. Save locally, then review before confirming.','<a href="#records" class="button secondary">Visit register</a>')+`<div class="grid"><form id="visit-form" class="card"><div class="panel-heading"><h2>Visit details</h2>${current?tag(current):'<span class="tag neutral">Saved on this device</span>'}</div><div class="form-grid">
-<div class="field"><label for="household_code">Household code *</label><input id="household_code" name="household_code" value="${esc(r.household_code)}" placeholder="HH-014" pattern="HH-[A-Za-z0-9-]{1,30}" maxlength="33" required></div><div class="field"><label for="community">Community *</label><input id="community" name="community" value="${esc(r.community)}" placeholder="e.g. Kuje" maxlength="100" required></div>
-<div class="field"><label for="visit_date">Visit date *</label><input id="visit_date" name="visit_date" type="date" value="${esc(r.visit_date)}" required></div><div class="field"><label for="activity">Outreach activity</label><select id="activity" name="activity">${options([['household_visit','Household visit'],['health_education','Health education'],['outreach','Community outreach']],r.activity)}</select></div>
-<div class="field"><label for="people_present">People present</label><input id="people_present" name="people_present" type="number" min="0" max="100" step="1" value="${r.people_present??''}" placeholder="Not recorded"></div><div class="field"><label for="water_source">Main water source</label><select id="water_source" name="water_source">${options([['','Not recorded'],['borehole','Borehole'],['tap','Tap'],['well','Well'],['surface_water','Surface water'],['rainwater','Rainwater'],['other','Other']],r.water_source)}</select></div>
-<div class="field"><label for="follow_up_required">Follow-up requested?</label><select id="follow_up_required" name="follow_up_required">${options([['','Not recorded'],['true','Yes'],['false','No']],r.follow_up_required)}</select></div><div class="field"><label for="follow_up_type">Follow-up category</label><select id="follow_up_type" name="follow_up_type">${options([['','Not recorded'],['health_education','Health education'],['administrative','Administrative'],['other','Other']],r.follow_up_type)}</select></div>
-<div class="field"><label for="due_date">Follow-up date</label><input id="due_date" name="due_date" type="date" value="${esc(r.due_date)}"></div><div class="field"><label for="follow_up_status">Follow-up status</label><select id="follow_up_status" name="follow_up_status">${options([['open','Open'],['completed','Completed']],r.follow_up_status)}</select></div>
-<div class="field full"><label for="note">Field observation</label><textarea id="note" name="note" maxlength="4000" placeholder="Use a household code. Describe attendance, water source, and any requested follow-up.">${esc(r.note)}</textarea><span class="muted">Use fictional data. Leave names, phone numbers, and medical details out.</span></div></div><div id="checks"></div><div class="spacer"></div><div class="actions"><button class="button secondary" type="submit" name="intent" value="draft">Save draft offline</button><button class="button" type="submit" name="intent" value="confirmed">Confirm record</button></div><p class="muted" id="saved-message"></p></form>
-<div><section class="card"><div class="panel-heading"><h2>AI field-note assistant</h2><span class="tag blue">Draft only</span></div><p class="muted">Turn your note into editable fields. Missing information stays unknown.</p><label class="check"><input type="checkbox" id="synthetic"><span>I confirm this note uses fictional data.</span></label><button id="extract" class="button">Extract from observation</button><div id="ai-result"></div></section>${r.ai?`<section class="card spacer-card"><div class="spacer"></div><h2>Previous AI assessment</h2><p class="muted">${esc(r.ai.model)} · ${esc(r.ai.provider)} · ${esc(r.ai.review_status)}</p><pre class="code">${esc(JSON.stringify(r.ai.draft,null,2))}</pre></section>`:''}<section class="card"><h2>Visit checklist</h2><p class="muted">Record household code and community. Ask about attendance, water source, and administrative follow-up. Check the record with the household before leaving.</p></section>${r.sync_state==='conflict'?`<section class="card"><h2>Resolve sync conflict</h2><p class="muted">Another device has a newer version. Compare the server record before choosing which to keep.</p><pre class="code">${esc(JSON.stringify(r.conflict_record,null,2))}</pre><div class="actions"><button id="use-server" class="button secondary">Use server version</button><button id="use-local" class="button">Keep local version</button></div></section>`:''}</div></div>`;
-const form=$('#visit-form');function check(){const v=readForm();let list=issues(v);if(duplicate(v))list.push('Possible duplicate: this household already has a visit on this date');$('#checks').innerHTML=list.length?`<div class="callout warning"><div><strong>Check before confirmation</strong><ul class="issue-list">${list.map(x=>'<li>'+esc(x)+'</li>').join('')}</ul></div></div>`:'<div class="callout">Required information is complete. Review it before confirming.</div>'}
-form.addEventListener('input',check);check();form.addEventListener('submit',async e=>{e.preventDefault();const status=e.submitter.value;const v=readForm();if(status==='confirmed'&&issues(v).length)return toast('Resolve missing fields before confirming.');if(status==='confirmed'&&duplicate(v))return toast('Possible duplicate. Save as a draft and check the existing record first.');const saved={...(current||{}),...v,id:current?.id||crypto.randomUUID(),status,server_revision:current?.server_revision||0,sync_state:current?.sync_state==='conflict'?'conflict':'pending',updated_at:new Date().toISOString(),ai:aiDraft||current?.ai||null};if(saved.ai)saved.ai={...saved.ai,review_status:status==='confirmed'?'confirmed':'pending'};try{await store(saved);await reload();current=saved;$('#saved-message').textContent='Saved on this device at '+new Date().toLocaleTimeString()+'.';toast(status==='confirmed'?'Record confirmed and saved locally.':'Draft saved locally.');history.replaceState(null,'','#visit/'+saved.id)}catch{toast('Device storage failed. Keep this form open and export or copy your notes.')}});
-$('#extract').onclick=async()=>{if(!$('#synthetic').checked)return toast('Confirm fictional data before requesting extraction.');const note=$('#note').value;if(!note.trim())return toast('Write a field observation first.');const btn=$('#extract');btn.disabled=true;btn.textContent='Processing observation…';try{aiDraft=await api('/api/extract',{note,synthetic_data_confirmed:true});$('#ai-result').innerHTML=`<div class="callout warning">Unverified AI draft. Compare each value with your note before applying.</div><p class="muted">${esc(aiDraft.model)} · ${esc(aiDraft.provider)}</p><pre class="code">${esc(JSON.stringify(aiDraft.draft,null,2))}</pre><button id="apply-ai" class="button ghost">Apply draft to form</button>`;$('#apply-ai').onclick=()=>{for(const k of fields)form.elements[k].value=aiDraft.draft[k]??'';check();toast('Draft applied. Review and edit the fields, then save.')}}catch(e){toast(e.message||'AI unavailable. You can still save the form manually.')}finally{btn.disabled=false;btn.textContent='Extract from observation'}};
-if($('#use-server'))$('#use-server').onclick=async()=>{await store(r.conflict_record);await reload();visit(r.id);toast('Server version loaded.')};if($('#use-local'))$('#use-local').onclick=async()=>{const v={...r,server_revision:r.conflict_record.server_revision,sync_state:'pending'};delete v.conflict_record;await store(v);await reload();visit(r.id);toast('Local version queued against the current server revision. Sync to save it.')};}
-function readForm(){const f=$('#visit-form').elements,follow=f.follow_up_required.value;return {household_code:f.household_code.value.trim(),community:f.community.value.trim(),visit_date:f.visit_date.value,activity:f.activity.value,people_present:f.people_present.value===''?null:Number(f.people_present.value),water_source:f.water_source.value||null,follow_up_required:follow===''?null:follow==='true',follow_up_type:follow==='false'?null:f.follow_up_type.value||null,note:f.note.value.trim(),due_date:follow==='true'?f.due_date.value:'',follow_up_status:f.follow_up_status.value}}
-function register(){$('#main').innerHTML=heading('Visit register','Review your drafts, confirmed visits, and synchronization status.','<a href="#visit" class="button">＋ New field visit</a>')+'<div class="toolbar"><input id="search" aria-label="Search household or community" placeholder="Search household or community"><select id="filter" aria-label="Filter records"><option value="all">All records</option><option value="draft">Drafts</option><option value="confirmed">Confirmed</option><option value="follow">Open follow-ups</option><option value="conflict">Sync conflicts</option></select></div><section class="card" id="register-table"></section>';const draw=()=>{const q=$('#search').value.toLowerCase(),f=$('#filter').value;$('#register-table').innerHTML=table(records.filter(r=>(r.household_code+' '+r.community).toLowerCase().includes(q)&&(f==='all'||f===r.status||f==='follow'&&r.follow_up_required&&r.follow_up_status==='open'||f==='conflict'&&r.sync_state==='conflict')))};$('#search').oninput=draw;$('#filter').onchange=draw;draw()}
-function download(name,content,mime){const url=URL.createObjectURL(new Blob([content],{type:mime})),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
-function csvCell(v){let s=String(v??'');if(/^[\s]*[=+@-]/.test(s))s="'"+s;return '"'+s.replaceAll('"','""')+'"'}
-function reports(){const confirmed=records.filter(r=>r.status==='confirmed'),by={};for(const r of confirmed){by[r.community]??={visits:0,people:0,follow:0};by[r.community].visits++;by[r.community].people+=r.people_present||0;if(r.follow_up_required&&r.follow_up_status==='open')by[r.community].follow++}
-$('#main').innerHTML=heading('Supervisor reports','Confirmed visits contribute to reporting. Drafts remain outside report totals.')+`<div class="metrics">${[['Confirmed visits',confirmed.length],['People present',confirmed.reduce((n,r)=>n+(r.people_present||0),0)],['Open follow-ups',confirmed.filter(r=>r.follow_up_required&&r.follow_up_status==='open').length],['Drafts excluded',records.length-confirmed.length]].map(x=>`<div class="card"><div class="metric-label">${x[0]}</div><div class="metric-value">${x[1]}</div></div>`).join('')}</div><section class="card"><div class="panel-heading"><h2>Community summary</h2><span class="tag">Confirmed records</span></div><div class="table-wrap"><table><thead><tr><th>Community</th><th>Visits</th><th>People present</th><th>Open follow-ups</th></tr></thead><tbody>${Object.entries(by).map(([k,v])=>`<tr><td>${esc(k)}</td><td>${v.visits}</td><td>${v.people}</td><td>${v.follow}</td></tr>`).join('')||'<tr><td colspan="4" class="empty">Confirm a visit to begin reporting.</td></tr>'}</tbody></table></div><p class="muted">People present is an attendance count across visits, not a count of unique residents.</p></section><div class="grid"><section class="card"><h2>Export confirmed records</h2><p class="muted">Portable reports for spreadsheet analysis and future HMIS mapping.</p><div class="actions"><button id="csv" class="button">Download CSV</button><button id="json" class="button secondary">Download JSON</button><button id="print" class="button secondary">Print report</button></div></section><section class="card"><h2>Device backup</h2><p class="muted">Include every local record, draft, and AI assessment. Save a backup before clearing browser data.</p><button id="backup" class="button secondary">Download full backup</button></section></div>`;
-$('#csv').onclick=()=>{const keys=['id','household_code','community','visit_date','activity','people_present','water_source','follow_up_required','follow_up_type','due_date','follow_up_status','status'];download('fieldhealth-confirmed.csv','\uFEFF'+[keys.map(csvCell).join(','),...confirmed.map(r=>keys.map(k=>csvCell(r[k])).join(','))].join('\r\n'),'text/csv;charset=utf-8')};$('#json').onclick=()=>download('fieldhealth-confirmed.json',JSON.stringify({schema_version:1,exported_at:new Date().toISOString(),visits:confirmed},null,2),'application/json');$('#backup').onclick=()=>download('fieldhealth-backup.json',JSON.stringify({schema_version:1,exported_at:new Date().toISOString(),visits:records},null,2),'application/json');$('#print').onclick=()=>window.print()}
-function settings(){$('#main').innerHTML=heading('Workspace settings','Use the public demo with fictional records.')+`<section class="card settings"><h2>Demo access</h2><p class="muted">The demo access code enables synchronization and the AI assistant. It stays in this browser tab’s session.</p><form id="token-form"><div class="field"><label for="token">Demo access code</label><input id="token" type="password" autocomplete="off" placeholder="Enter the code provided for this demo"></div><div class="spacer"></div><div class="actions"><button class="button">Save demo code</button><button type="button" id="disconnect" class="button secondary">Clear demo code</button></div></form></section><div class="spacer"></div><section class="card settings"><h2>Fictional demo data</h2><p class="muted">Add eight synthetic visits to explore the dashboard and review workflow. Examples are clearly marked and are stored as local records.</p><button id="seed" class="button secondary">Load fictional examples</button><div class="callout warning">This public demo is for fictional records only. Do not enter names, phone numbers, or medical details.</div></section><div class="spacer"></div><section class="card settings"><h2>Restore a backup</h2><p class="muted">Restore records exported from this workspace. Matching IDs are skipped; restored records are queued for synchronization.</p><input id="import" type="file" accept="application/json" aria-label="Import a FieldHealth backup"><p class="muted">Offline capture requires opening the app online once. Browser storage can be cleared by device settings, so keep backups.</p></section>`;
-$('#token-form').onsubmit=e=>{e.preventDefault();sessionStorage.setItem('fieldhealth-token',$('#token').value);$('#token').value='';toast('Demo code saved for this session.')};$('#disconnect').onclick=()=>{sessionStorage.removeItem('fieldhealth-token');toast('Demo access cleared.')};$('#seed').onclick=seed;
-$('#import').onchange=async e=>{try{const file=e.target.files[0];if(file.size>2000000)throw new Error('Backup is too large.');const data=JSON.parse(await file.text());if(data.schema_version!==1||!Array.isArray(data.visits))throw new Error('Not a FieldHealth backup.');const candidates=data.visits.map(r=>{if(!/^[0-9a-f-]{36}$/i.test(r.id)||typeof r.community!=='string'||typeof r.household_code!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(r.visit_date)||typeof r.note!=='string'||r.note.length>4000||![null,true,false].includes(r.follow_up_required)||!['draft','confirmed'].includes(r.status))throw new Error('Backup contains invalid records.');return r});let n=0;for(const r of candidates){if(records.some(x=>x.id===r.id))continue;await store({...r,server_revision:0,sync_state:'pending'});n++}await reload();toast(n+' records restored.')}catch(err){toast(err.message||'Could not restore backup.')}}}
-async function seed(){if(records.some(r=>r.demo)){toast('Fictional examples are already loaded.');return}for(let i=0;i<8;i++){const d=new Date();d.setDate(d.getDate()-(i%7));const missing=i===2||i===6,follow=i%3===0;await store({id:crypto.randomUUID(),household_code:'HH-DEMO-'+String(i+1).padStart(3,'0'),community:['Kuje','Gwagwalada','Bwari'][i%3]+' (fictional)',visit_date:d.toLocaleDateString('en-CA'),activity:i%2?'health_education':'household_visit',people_present:3+i%5,water_source:missing?null:['borehole','tap','well'][i%3],follow_up_required:follow,follow_up_type:follow?'health_education':null,due_date:follow?today():'',follow_up_status:'open',note:'Synthetic example only. Household visit recorded for demonstration.',status:missing?'draft':'confirmed',sync_state:'pending',server_revision:0,updated_at:new Date().toISOString(),demo:true,ai:null})}await reload();toast('Eight fictional examples loaded.');location.hash='dashboard'}
-function render(){const [route,id]=(location.hash.slice(1)||'dashboard').split('/');document.querySelectorAll('nav a').forEach(a=>a.classList.toggle('active',a.hash==='#'+route));if(route==='visit')visit(id);else if(route==='records')register();else if(route==='reports')reports();else if(route==='settings')settings();else dashboard()}
-$('#sync').onclick=sync;window.addEventListener('hashchange',render);window.addEventListener('offline',updateStatus);window.addEventListener('online',()=>{updateStatus();if(sessionStorage.getItem('fieldhealth-token'))sync()});
-try{db=await openDB();await reload();try{serverHealth=await (await fetch('/api/health')).json()}catch{}render();if('serviceWorker'in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>toast('Offline app caching unavailable. Keep this tab open for field capture.'))}catch{ $('#main').innerHTML='<section class="card"><h1>Device storage is unavailable</h1><p>Enable browser storage and reload. FieldHealth cannot save offline visits in this browser session.</p></section>'}
+const APP_DB = 'fieldhealth-pwa';
+const APP_STORE = 'visits';
+const DEMO_CODE_KEY = 'fieldhealth_demo_code';
+
+const fields = [
+  ['household_code', 'Household code'],
+  ['households_visited', 'Households visited'],
+  ['people_present', 'People present'],
+  ['water_source', 'Water source'],
+  ['follow_up_required', 'Follow-up required'],
+  ['follow_up_type', 'Follow-up type']
+];
+
+const state = {
+  route: 'dashboard',
+  records: [],
+  current: null,
+  captureMode: 'speak',
+  manualFields: new Set(),
+  aiHasAnalyzed: false,
+  aiNote: '',
+  aiResult: null,
+  aiBusy: false,
+  listening: false,
+  installPrompt: null,
+  serverOnline: false,
+  publicDemo: false,
+  syncConflict: null,
+  lastError: ''
+};
+
+const $ = (selector) => document.querySelector(selector);
+const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+const uid = () => (window.crypto && crypto.randomUUID ? crypto.randomUUID() : `visit-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+const nowIso = () => new Date().toISOString();
+const dateLabel = (value) => value ? new Intl.DateTimeFormat('en-NG', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) : 'Not recorded';
+const numberValue = (value) => value === null || value === undefined ? '' : String(value);
+const token = () => sessionStorage.getItem(DEMO_CODE_KEY) || '';
+
+function emptyRecord() {
+  return {
+    id: uid(),
+    activity: 'household_visit',
+    community: 'Fictional demo workspace',
+    visit_date: new Date().toISOString().slice(0, 10),
+    follow_up_status: 'open',
+    server_revision: 0,
+    sync_state: 'pending',
+    household_code: '',
+    households_visited: null,
+    people_present: null,
+    water_source: '',
+    follow_up_required: false,
+    follow_up_type: '',
+    note: '',
+    status: 'draft',
+    created_at: nowIso(),
+    updated_at: nowIso(),
+    synced: false
+  };
+}
+
+function normalizeRecord(record) {
+  const normalized = { ...emptyRecord(), ...record };
+  if (normalized.follow_up_required === 'true') normalized.follow_up_required = true;
+  if (normalized.follow_up_required === 'false') normalized.follow_up_required = false;
+  return normalized;
+}
+
+function openDb() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(APP_DB, 1);
+    request.onupgradeneeded = () => request.result.createObjectStore(APP_STORE, { keyPath: 'id' });
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function localGetAll() {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const request = db.transaction(APP_STORE, 'readonly').objectStore(APP_STORE).getAll();
+    request.onsuccess = () => resolve(request.result.filter((record) => !record.deleted).map(normalizeRecord).sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at)));
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function localGetDeleted() {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const request = db.transaction(APP_STORE, 'readonly').objectStore(APP_STORE).getAll();
+    request.onsuccess = () => resolve(request.result.filter((record) => record.deleted).map(normalizeRecord));
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function localPut(record) {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const request = db.transaction(APP_STORE, 'readwrite').objectStore(APP_STORE).put(normalizeRecord(record));
+    request.onsuccess = () => resolve(record);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function localDelete(id) {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const request = db.transaction(APP_STORE, 'readwrite').objectStore(APP_STORE).delete(id);
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+  });
+}
+
+function setNotice(message, type = 'info') {
+  const notice = $('#notice');
+  if (!notice) return;
+  notice.className = `notice ${type}`;
+  notice.textContent = message;
+  notice.hidden = !message;
+  if (message) window.setTimeout(() => { if (notice.textContent === message) notice.hidden = true; }, 6000);
+}
+
+async function api(path, options = {}) {
+  const headers = { ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...(options.headers || {}) };
+  if (token()) headers.Authorization = `Bearer ${token()}`;
+  const response = await fetch(path, { ...options, headers });
+  let body = {};
+  try { body = await response.json(); } catch { body = {}; }
+  if (!response.ok) {
+    const error = new Error(body.error || (response.status === 401 ? 'Enter the demo access code in Settings.' : 'The service is unavailable right now.'));
+    error.status = response.status;
+    error.data = body;
+    throw error;
+  }
+  return body;
+}
+
+function normalizedHouseholdCode(record) {
+  return String(record?.household_code || '').trim().toUpperCase();
+}
+
+function duplicateVisit(record) {
+  const householdCode = normalizedHouseholdCode(record);
+  if (!householdCode || !record?.visit_date) return null;
+  return state.records.find((candidate) => candidate.id !== record.id && normalizedHouseholdCode(candidate) === householdCode && candidate.visit_date === record.visit_date) || null;
+}
+
+function fieldIssueMap(record) {
+  const issues = {};
+  if (!record.household_code || !/^HH-[A-Za-z0-9-]{1,30}$/.test(record.household_code)) issues.household_code = 'Add a household code like HH-014.';
+  if (!record.households_visited || Number(record.households_visited) < 1) issues.households_visited = 'Add the number of households visited.';
+  if (record.people_present === null || record.people_present === '' || Number(record.people_present) < 0) issues.people_present = 'Add the number of people present.';
+  if (!record.water_source) issues.water_source = 'Choose a water source.';
+  if (record.follow_up_required && !record.follow_up_type) issues.follow_up_type = 'Choose a follow-up type.';
+  const duplicate = duplicateVisit(record);
+  if (duplicate) issues.household_code = `A visit for ${duplicate.household_code} already exists for ${duplicate.visit_date}.`;
+  return issues;
+}
+
+function qualityIssues(record) {
+  return Object.values(fieldIssueMap(record));
+}
+
+function pendingCount() {
+  return state.records.filter((record) => !record.synced).length;
+}
+
+function connectionStatus() {
+  const pending = pendingCount();
+  if (navigator.onLine === false) return { className: 'offline', label: 'Offline · saved on device' };
+  if (state.syncConflict) return { className: 'conflict', label: 'Conflict · choose a copy' };
+  if (!token() && !state.publicDemo) return { className: 'attention', label: 'Online · demo code needed' };
+  if (pending) return { className: 'pending', label: `Waiting to sync (${pending})` };
+  if (state.publicDemo && state.serverOnline) return { className: 'online', label: 'Public demo · online' };
+  if (state.serverOnline) return { className: 'online', label: 'Synced' };
+  return { className: 'offline', label: 'Saved on device' };
+}
+
+function connectionMarkup() {
+  const status = connectionStatus();
+  return `<span id="connection" class="connection status-chip ${status.className}" role="status" aria-live="polite"><span class="status-mark" aria-hidden="true"></span>${status.label}</span>`;
+}
+
+function attentionMarkup() {
+  const items = [];
+  if (state.syncConflict) items.push({ label: 'Sync conflict', detail: 'Choose which copy to keep in Records.', action: 'records' });
+  state.records.filter((record) => !record.synced).slice(0, 3).forEach((record) => {
+    items.push({ label: record.household_code || 'Uncoded household', detail: record.status === 'draft' ? 'Complete the missing details before confirmation.' : 'Saved on this device and waiting to sync.', action: 'edit', id: record.id });
+  });
+  if (!items.length) return '';
+  const rows = items.map((item) => {
+    const attributes = item.action === 'edit' ? `data-action="edit-record" data-id="${esc(item.id)}"` : 'data-route="records"';
+    return `<button class="attention-row" ${attributes} type="button"><span class="attention-mark" aria-hidden="true">!</span><span><strong>${esc(item.label)}</strong><small>${esc(item.detail)}</small></span><span class="attention-arrow" aria-hidden="true">›</span></button>`;
+  }).join('');
+  return `<section class="attention-card" aria-labelledby="attention-title"><div class="card-heading"><div><p class="eyebrow">Needs attention</p><h2 id="attention-title">Keep your fieldwork moving</h2></div><span class="attention-count">${items.length}</span></div><div class="attention-list">${rows}</div></section>`;
+}
+
+function navIcon(name) {
+  const paths = {
+    today: '<path d="M4 5.5h16M6.5 3v5M17.5 3v5M5 9.5h14v10H5z"/><path d="M8 13h3M13 13h3M8 16h3"/>',
+    visit: '<path d="M12 5v14M5 12h14"/>',
+    records: '<path d="M6 4h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"/><path d="M8 8h8M8 12h8M8 16h5"/>',
+    settings: '<path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z"/><path d="m19 13.5 1.2 1-.1 1.8-1.5.8-.4 1.4.8 1.5-1.3 1.3-1.5-.8-1.4.4-.8 1.5-1.8.1-1-1.2-1.4-.4-1.5.8-1.3-1.3.8-1.5-.4-1.4-1.5-.8-.1-1.8 1.2-1  .4-1.4- .8-1.5 1.3-1.3 1.5.8 1.4-.4.8-1.5 1.8-.1 1 1.2 1.4.4Z"/>'
+  };
+  return `<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${paths[name]}</svg>`;
+}
+
+function navMarkup() {
+  const items = [['dashboard', 'Today', 'today'], ['visit', 'New visit', 'visit'], ['records', 'Records', 'records'], ['settings', 'Settings', 'settings']];
+  return items.map(([route, label, icon]) => `<a class="nav-link ${state.route === route ? 'active' : ''}" href="#${route}" data-route="${route}">${navIcon(icon)}<span>${label}</span></a>`).join('');
+}
+
+function micIcon() {
+  return '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M8.5 21h7"/></svg>';
+}
+
+function shellMarkup() {
+  return `
+    <a class="skip-link" href="#main">Skip to content</a>
+    <aside class="app-sidebar">
+      <a class="brand" href="#dashboard" aria-label="FieldHealth home"><span class="brand-mark">FH</span><span><strong>FieldHealth</strong><small>Field reporting workspace</small></span></a>
+      <nav class="primary-nav" aria-label="Primary navigation">${navMarkup()}</nav>
+      <div class="sidebar-foot"><span class="offline-dot"></span><span id="sidebar-status">Local-first workspace</span></div>
+    </aside>
+    <div class="app-shell">
+      <header class="topbar">
+        <div><p class="eyebrow">FieldHealth AI</p><h1 id="page-title">Today</h1></div>
+        <div class="topbar-actions">${connectionMarkup()}<button id="sync" class="button secondary" type="button">Sync <span id="pending">0</span></button></div>
+      </header>
+      <main id="main" tabindex="-1"></main>
+      <nav class="mobile-nav" aria-label="Mobile navigation">${navMarkup()}</nav>
+      <div id="notice" class="notice" role="status" hidden></div>
+    </div>`;
+}
+
+function dashboardView() {
+  const confirmed = state.records.filter((record) => record.status === 'confirmed');
+  const households = confirmed.reduce((total, record) => total + Number(record.households_visited || 0), 0);
+  const people = confirmed.reduce((total, record) => total + Number(record.people_present || 0), 0);
+  const followUps = confirmed.filter((record) => record.follow_up_required).length;
+  const ai = state.aiResult;
+  return `
+    <section class="welcome-row"><div><p class="eyebrow accent">Good fieldwork starts with a clear note</p><h2>Turn a spoken observation into a ready-to-review visit.</h2><p class="lede">Use the assistant to capture what you see in plain language. It suggests structured fields while keeping your original note for review.</p></div><button class="button primary-action" data-action="new-visit" type="button">Start a visit</button></section>
+    <section class="ai-card" aria-labelledby="assistant-title">
+      <div class="ai-card-heading"><div class="ai-badge">AI</div><div><p class="eyebrow accent">FieldHealth AI</p><h2 id="assistant-title">AI Field Assistant</h2><p>Speak or type a field note. The assistant finds counts, water sources, and follow-up needs while leaving your original words intact.</p></div><span class="ai-live">Ready</span></div>
+      <div class="assistant-input"><label for="ai-note">What did you observe?</label><div class="input-with-action"><textarea id="ai-note" rows="4" placeholder="Example: We visited five households. Two people were present at each home. Three use a borehole. One household needs a follow-up visit.">${esc(state.aiNote)}</textarea><button id="ai-voice" class="voice-button ${state.listening ? 'listening' : ''}" type="button" aria-label="Use voice input">${micIcon()}<span>${state.listening ? 'Listening…' : 'Speak'}</span></button></div><div class="assistant-actions"><span class="hint">Tip: tap your phone keyboard microphone if browser voice input is unavailable.</span><button id="analyze" class="button primary" type="button" ${state.aiBusy ? 'disabled' : ''}>${state.aiBusy ? 'Analyzing…' : 'Analyze note'}</button></div></div>
+      ${ai ? aiResultMarkup(ai) : '<div class="ai-empty"><strong>Your original words stay visible.</strong><span>After analysis, review each suggestion before saving the visit.</span></div>'}
+    </section>
+    ${attentionMarkup()}
+    <section class="section-heading"><div><p class="eyebrow">Confirmed activity</p><h2>Your field snapshot</h2></div><button class="text-button" data-route="reports" type="button">Open reports</button></section>
+    <section class="metrics metrics-four"><article class="metric-card"><span>Households visited</span><strong>${households}</strong><small>Confirmed visits</small></article><article class="metric-card"><span>People reached</span><strong>${people}</strong><small>Present during visits</small></article><article class="metric-card"><span>Follow-ups</span><strong>${followUps}</strong><small>Need attention</small></article><article class="metric-card"><span>Pending sync</span><strong>${pendingCount()}</strong><small>${state.serverOnline ? 'Ready to sync' : 'Saved on this device'}</small></article></section>
+    ${state.records.length ? `<section class="card recent-card"><div class="card-heading"><div><p class="eyebrow">Recent records</p><h2>Latest visits</h2></div><button class="text-button" data-route="records" type="button">View all</button></div>${recentRows(state.records.slice(0, 3))}</section>` : '<section class="empty-card"><div class="empty-icon">+</div><h2>Your first visit starts here</h2><p>Capture a household visit and it will remain available even when you lose connection.</p><button class="button primary" data-action="new-visit" type="button">Create visit</button></section>'}`;
+}
+
+function aiResultMarkup(result) {
+  const extraction = result.extraction || result.draft || {};
+  const rows = fields.map(([key, label]) => `<div class="suggestion-row"><span>${label}</span><strong>${esc(extraction[key] === null || extraction[key] === undefined || extraction[key] === '' ? 'Not found in notes' : extraction[key])}</strong></div>`).join('');
+  const applied = result.applied;
+  const actions = applied
+    ? '<p class="ai-applied-note"><span aria-hidden="true">✓</span><span>These values were filled into the visit details below. Review anything marked <strong>Needs attention</strong>.</span></p><button class="text-button" data-action="clear-ai" type="button">Clear result</button>'
+    : '<button class="button primary" data-action="use-extraction" type="button">Review in visit form</button><button class="text-button" data-action="clear-ai" type="button">Clear result</button>';
+  return `<div class="ai-result"><div class="result-header"><div><p class="eyebrow accent">${applied ? 'AI values applied' : 'AI proposal'}</p><h3>${applied ? 'Check the visit details' : result.quality?.is_confirmable ? 'The note is ready to review' : 'A few details still need your input'}</h3></div><span class="confidence-pill">${applied ? 'Review now' : result.quality?.is_confirmable ? 'Good coverage' : 'Needs review'}</span></div><div class="suggestions-grid">${rows}</div><div class="original-note"><span>Original note</span><p>${esc(result.original_note || state.aiNote)}</p></div><div class="result-actions">${actions}</div></div>`;
+}
+
+function recentRows(records) {
+  return `<div class="recent-list">${records.map((record) => `<button class="recent-row" data-action="edit-record" data-id="${esc(record.id)}" type="button"><span class="record-status ${record.status}"></span><span class="recent-main"><strong>${esc(record.household_code || 'Uncoded household')}</strong><small>${dateLabel(record.updated_at)} · ${record.households_visited || 0} household${Number(record.households_visited) === 1 ? '' : 's'}</small></span><span class="row-state">${record.status === 'confirmed' ? 'Confirmed' : 'Draft'}<span aria-hidden="true">›</span></span></button>`).join('')}</div>`;
+}
+
+function displayLabel(value) {
+  return String(value || 'Not recorded').replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function syncConflictMarkup() {
+  const conflict = state.syncConflict;
+  if (!conflict) return '';
+  const local = conflict.local || {};
+  const server = conflict.server || {};
+  return `<section class="card sync-conflict" role="alert" aria-labelledby="sync-conflict-title"><p class="eyebrow accent">Sync needs a choice</p><h3 id="sync-conflict-title">This visit changed in two places</h3><p class="muted">Choose which version to keep. Your local version stays on this device until you decide.</p><div class="conflict-compare"><div><strong>Your device</strong><span>${esc(local.household_code || 'Uncoded')} · ${esc(local.note || 'No note')}</span></div><div><strong>Online copy</strong><span>${esc(server.household_code || 'Uncoded')} · ${esc(server.note || 'No note')}</span></div></div><div class="conflict-actions"><button class="button secondary" data-action="use-server-conflict" type="button">Use online copy</button><button class="button primary" data-action="keep-local-conflict" type="button">Keep my copy</button></div></section>`;
+}
+
+function visitView() {
+  const record = normalizeRecord(state.current || emptyRecord());
+  const issues = qualityIssues(record);
+  return `<section class="page-intro"><div><p class="eyebrow accent">Household visit</p><h2>${record.status === 'confirmed' ? 'Review confirmed visit' : 'New household visit'}</h2><p class="lede">Complete the quick facts, then review the note before confirming.</p></div><span class="save-state ${record.synced ? 'synced' : ''}">${record.synced ? 'Synced' : record.status === 'confirmed' ? 'Saved locally' : 'Draft'}</span></section>
+    <div class="visit-layout"><form id="visit-form" class="card visit-form" novalidate><div class="form-card-heading"><div><p class="eyebrow">Step 1</p><h3>Visit facts</h3></div><span class="required-note">Required fields marked *</span></div><div class="form-grid"><label>Household code<input name="household_code" value="${esc(record.household_code)}" placeholder="Example: HH-014" autocomplete="off"></label><label>Households visited *<input name="households_visited" type="number" min="1" max="1000" inputmode="numeric" value="${numberValue(record.households_visited)}"></label><label>People present *<input name="people_present" type="number" min="0" max="100" inputmode="numeric" value="${numberValue(record.people_present)}"></label><label>Water source *<select name="water_source"><option value="">Choose one</option>${['borehole', 'tap', 'well', 'surface_water', 'rainwater', 'other'].map((value) => `<option value="${value}" ${record.water_source === value ? 'selected' : ''}>${value.replace('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())}</option>`).join('')}</select></label><label>Follow-up needed<select name="follow_up_required"><option value="false" ${!record.follow_up_required ? 'selected' : ''}>No</option><option value="true" ${record.follow_up_required ? 'selected' : ''}>Yes</option></select></label><label>Follow-up type<input name="follow_up_type" value="${esc(record.follow_up_type)}" placeholder="Example: water treatment"></label></div><div class="form-divider"></div><div class="form-card-heading note-heading"><div><p class="eyebrow">Step 2</p><h3>Observation note</h3></div><button id="form-voice" class="small-button" type="button">${state.listening ? 'Listening…' : 'Speak note'}</button></div><p class="field-help">Use your voice or type naturally. The original note is kept with the visit.</p><textarea name="note" rows="6" placeholder="Describe what you observed in the community…">${esc(record.note)}</textarea><div class="form-actions"><button class="button secondary" data-action="cancel-visit" type="button">Cancel</button><button class="button primary" type="submit">${record.status === 'confirmed' ? 'Save changes' : 'Save visit'}</button></div></form><aside class="review-rail"><div class="card"><p class="eyebrow accent">Before you confirm</p><h3>Quick quality check</h3>${issues.length ? `<ul class="issue-list">${issues.map((issue) => `<li>${esc(issue)}</li>`).join('')}</ul><p class="rail-copy">You can save this as a draft and finish it later.</p>` : '<div class="ready-state"><span>✓</span><p><strong>Looks complete</strong><br>Review the details, then save the visit.</p></div>'}</div><div class="card assistant-tip"><div class="ai-badge small">AI</div><h3>Need help structuring the note?</h3><p>Go to Today and use the AI Field Assistant. It will suggest values without replacing your original words.</p><button class="text-button" data-route="dashboard" type="button">Open assistant</button></div></aside></div>`;
+}
+
+function recordsView() {
+  const cards = state.records.map((record) => `<button class="record-card" data-action="edit-record" data-id="${esc(record.id)}" type="button"><span class="record-card-heading"><strong>${esc(record.household_code || 'Uncoded household')}</strong><span class="table-status ${record.status}">${record.status === 'confirmed' ? 'Confirmed' : 'Draft'}</span></span><span class="record-card-details"><span>${record.households_visited || 0} household${Number(record.households_visited) === 1 ? '' : 's'}</span><span>${record.people_present ?? '—'} people</span><span>${esc(displayLabel(record.water_source))}</span></span><span class="record-card-footer"><span>${dateLabel(record.updated_at)}</span><span aria-hidden="true">Open ›</span></span></button>`).join('');
+  return `${syncConflictMarkup()}<section class="page-intro"><div><p class="eyebrow accent">Your records</p><h2>Visit register</h2><p class="lede">Everything captured on this device, including drafts waiting for sync.</p></div><button class="button primary" data-action="new-visit" type="button">New visit</button></section>${state.records.length ? `<section class="records-list" aria-label="Saved visits">${cards}</section>` : '<section class="empty-card"><div class="empty-icon">+</div><h2>No visits yet</h2><p>Saved visits will appear here and can be exported as CSV.</p></section>'}`;
+}
+
+function reportsView() {
+  const confirmed = state.records.filter((record) => record.status === 'confirmed');
+  const households = confirmed.reduce((sum, record) => sum + Number(record.households_visited || 0), 0);
+  const people = confirmed.reduce((sum, record) => sum + Number(record.people_present || 0), 0);
+  const followUps = confirmed.filter((record) => record.follow_up_required).length;
+  const water = confirmed.reduce((counts, record) => { const key = record.water_source || 'not recorded'; counts[key] = (counts[key] || 0) + 1; return counts; }, {});
+  return `<section class="page-intro"><div><p class="eyebrow accent">Reports</p><h2>Simple field snapshot</h2><p class="lede">Use these totals for a quick review, then export the underlying records.</p></div><button class="button primary" data-action="export-csv" type="button">Export CSV</button></section><section class="metrics metrics-three"><article class="metric-card"><span>Households visited</span><strong>${households}</strong><small>Confirmed records</small></article><article class="metric-card"><span>People reached</span><strong>${people}</strong><small>People present</small></article><article class="metric-card"><span>Follow-ups</span><strong>${followUps}</strong><small>Records needing action</small></article></section><section class="report-grid"><div class="card"><div class="card-heading"><div><p class="eyebrow">Water sources</p><h3>What communities reported</h3></div></div>${Object.keys(water).length ? `<div class="bar-list">${Object.entries(water).map(([name, count]) => `<div class="bar-row"><div><span>${esc(name)}</span><strong>${count}</strong></div><div class="bar-track"><span style="width:${Math.min(100, count / Math.max(...Object.values(water)) * 100)}%"></span></div></div>`).join('')}</div>` : '<p class="muted">Confirm a visit to see the snapshot.</p>'}</div><div class="card"><p class="eyebrow accent">Export-ready</p><h3>Share the evidence</h3><p class="muted">CSV export includes visit facts, the original note, status, and timestamps. It works offline with the records on this device.</p><button class="button secondary" data-action="export-csv" type="button">Download visit CSV</button></div></section>`;
+}
+
+function privateSettingsView() {
+  return `<section class="page-intro"><div><p class="eyebrow accent">Settings</p><h2>Workspace settings</h2><p class="lede">Use the public demo with fictional records.</p></div></section><section class="settings-grid"><div class="card"><p class="eyebrow accent">Demo access</p><h3>Connect online services</h3><p class="muted">The demo access code enables synchronization and the AI assistant. It stays in this browser tab’s session.</p><label>Demo access code<input id="demo-code" type="password" value="${esc(token())}" placeholder="Enter the code provided for this demo" autocomplete="off"></label><div class="form-actions"><button class="button primary" data-action="save-token" type="button">Save demo code</button><button class="button secondary" data-action="clear-token" type="button">Clear</button></div></div><div class="card"><p class="eyebrow">Install</p><h3>Keep FieldHealth on your phone</h3><p class="muted">Install the PWA for a focused field workspace. Forms and records remain available when you are offline.</p><button id="install-app" class="button secondary" data-action="install-app" type="button" ${state.installPrompt ? '' : 'disabled'}>${state.installPrompt ? 'Install FieldHealth' : 'Install option appears in a supported browser'}</button></div><div class="card"><p class="eyebrow">Demo safety</p><h3>Fictional records only</h3><p class="muted">This public demo is for fictional records only. Do not enter names, phone numbers, or medical details.</p><div class="privacy-callout"><span>i</span><p>AI suggestions are not a diagnosis or a decision. A field worker reviews every suggestion before a visit is confirmed.</p></div></div><div class="card"><p class="eyebrow">Explore</p><h3>Reports and exports</h3><p class="muted">Review totals and download your visit register as a CSV file.</p><button class="button secondary" data-route="reports" type="button">Open reports</button></div></section>`;
+}
+
+function render() {
+  const titles = { dashboard: 'Today', visit: 'New visit', records: 'Records', reports: 'Reports', settings: 'Settings' };
+  $('#page-title').textContent = titles[state.route] || 'Today';
+  document.querySelectorAll('.primary-nav, .mobile-nav').forEach((nav) => { nav.innerHTML = navMarkup(); });
+  $('#main').innerHTML = state.route === 'dashboard' ? dashboardView() : state.route === 'visit' ? visitView() : state.route === 'records' ? recordsView() : state.route === 'reports' ? reportsView() : settingsView();
+  $('#pending').textContent = pendingCount();
+  const connection = $('#connection');
+  if (connection) connection.outerHTML = connectionMarkup();
+  $('#sidebar-status').textContent = state.serverOnline ? 'Online services ready' : 'Local-first workspace';
+  bindViewEvents();
+  if (state.route === 'visit' && state.captureMode === 'speak' && state.aiHasAnalyzed) {
+    window.requestAnimationFrame(() => $('#visit-error-summary')?.focus({ preventScroll: false }));
+  }
+}
+
+function setRoute(route) {
+  state.route = route;
+  if (location.hash !== `#${route}`) history.replaceState(null, '', `#${route}`);
+  if (route !== 'visit') state.listening = false;
+  render();
+  window.requestAnimationFrame(() => $('#main')?.focus({ preventScroll: true }));
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function updateCurrentFromForm(form) {
+  if (!state.current) state.current = emptyRecord();
+  const data = new FormData(form);
+  state.current = normalizeRecord({ ...state.current, household_code: data.get('household_code')?.trim() || '', households_visited: data.get('households_visited') === '' ? null : Number(data.get('households_visited')), people_present: data.get('people_present') === '' ? null : Number(data.get('people_present')), water_source: data.get('water_source') || '', follow_up_required: data.get('follow_up_required') === 'true', follow_up_type: data.get('follow_up_type')?.trim() || '', note: data.get('note') || '', updated_at: nowIso() });
+}
+
+async function saveCurrent(event) {
+  event.preventDefault();
+  updateCurrentFromForm(event.currentTarget);
+  const duplicate = duplicateVisit(state.current);
+  if (duplicate) {
+    setNotice(`Duplicate visit: ${duplicate.household_code} already has a record for ${duplicate.visit_date}.`, 'warning');
+    render();
+    return;
+  }
+  const issues = qualityIssues(state.current);
+  state.current.status = issues.length ? 'draft' : 'confirmed';
+  state.current.synced = false;
+  await localPut(state.current);
+  state.records = await localGetAll();
+  setNotice(issues.length ? 'Draft saved. Complete the missing fields, then confirm the visit.' : 'Visit confirmed on this device. Sync it when you are online.', issues.length ? 'warning' : 'success');
+  setRoute('records');
+}
+
+async function deleteCurrent() {
+  const record = state.current;
+  if (!record || !state.records.some((candidate) => candidate.id === record.id)) return;
+  if (!window.confirm(`Delete the visit for ${record.household_code || 'this household'}? This cannot be undone.`)) return;
+  try {
+    if (record.synced || Number(record.server_revision) > 0) {
+      await localPut({ ...record, deleted: true, synced: false, updated_at: nowIso() });
+    } else {
+      await localDelete(record.id);
+    }
+    state.records = await localGetAll();
+    state.current = null;
+    setNotice('Visit deleted.', 'success');
+    setRoute('records');
+  } catch (error) {
+    setNotice(error.message || 'The visit could not be deleted.', 'warning');
+  }
+}
+
+function applyExtraction(options = {}) {
+  const extraction = state.aiResult?.extraction || state.aiResult?.draft;
+  if (!extraction) return;
+  const current = { ...(state.current || emptyRecord()) };
+  fields.forEach(([key]) => {
+    const value = extraction[key];
+    if (value !== null && value !== undefined && value !== '' && !state.manualFields.has(key)) current[key] = value;
+  });
+  state.current = normalizeRecord({ ...current, note: state.aiResult.original_note || state.aiNote || current.note || '', status: 'draft' });
+  state.aiHasAnalyzed = true;
+  if (!options.keepResult) {
+    state.aiResult = null;
+    setRoute('visit');
+  }
+}
+
+function startVoice(target) {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) { setNotice('Voice input is not available in this browser. Use the microphone on your phone keyboard instead.', 'info'); return; }
+  const recognition = new SpeechRecognition();
+  recognition.lang = 'en-NG';
+  recognition.interimResults = true;
+  recognition.continuous = false;
+  state.listening = true;
+  render();
+  recognition.onresult = (event) => {
+    const transcript = Array.from(event.results).map((result) => result[0].transcript).join(' ');
+    if (target === 'assistant') { state.aiNote = transcript; } else { const textarea = document.querySelector('#visit-form textarea[name="note"]'); const existing = state.current?.note || textarea?.value || ''; const next = `${existing ? `${existing} ` : ''}${transcript}`; if (state.current) state.current.note = next; }
+    render();
+  };
+  recognition.onerror = () => { state.listening = false; setNotice('Voice input stopped. You can use the keyboard microphone or type the note.', 'info'); render(); };
+  recognition.onend = () => { state.listening = false; render(); };
+  recognition.start();
+}
+
+async function analyzeNote() {
+  const visitForm = $('#visit-form');
+  if (visitForm) updateCurrentFromForm(visitForm);
+  const note = $('#ai-note')?.value.trim() || visitForm?.querySelector('textarea[name="note"]')?.value.trim() || state.current?.note?.trim() || '';
+  state.aiNote = note;
+  if (state.current) state.current.note = note;
+  if (!note) { setNotice('Add or speak an observation first.', 'warning'); return; }
+  state.aiBusy = true;
+  render();
+  try {
+    const result = await api('/api/extract', { method: 'POST', body: JSON.stringify({ note, synthetic_data_confirmed: true }) });
+    state.aiResult = result;
+    if (visitForm && state.captureMode === 'speak') {
+      applyExtraction({ keepResult: true });
+      state.aiResult = { ...result, applied: true };
+      setNotice('AI filled the visit details. Review the fields marked Needs attention.', 'success');
+    } else {
+      setNotice('AI suggestions are ready for your review.', 'success');
+    }
+  }
+  catch (error) { setNotice(error.message, 'warning'); }
+  finally { state.aiBusy = false; render(); }
+}
+
+async function syncRecords() {
+  if (!navigator.onLine) { setNotice('You are offline. Records are safe on this device and will sync later.', 'info'); return; }
+  try {
+    const deleted = await localGetDeleted();
+    for (const record of deleted) {
+      try {
+        await api(`/api/visits/${encodeURIComponent(record.id)}?server_revision=${encodeURIComponent(record.server_revision || 0)}`, { method: 'DELETE' });
+      } catch (error) {
+        if (!String(error.message || '').toLowerCase().includes('not found')) throw error;
+      }
+      await localDelete(record.id);
+    }
+    const pending = state.records.filter((record) => !record.synced);
+    for (const record of pending) { const allowedFollowUp = ['health_education', 'administrative', 'other']; const serverRecord = { ...record, follow_up_type: record.follow_up_required ? (allowedFollowUp.includes(record.follow_up_type) ? record.follow_up_type : 'other') : null }; const result = await api('/api/visits', { method: 'POST', body: JSON.stringify(serverRecord) }); await localPut({ ...(result.visit || serverRecord), synced: true }); }
+    const remote = await api('/api/visits');
+    for (const record of remote.visits || []) await localPut({ ...record, synced: true });
+    state.records = await localGetAll();
+    setNotice('Records synced successfully.', 'success');
+  } catch (error) {
+    if (error.status === 409 && error.data?.server_record) {
+      const server = normalizeRecord(error.data.server_record);
+      const local = state.records.find((record) => record.id === server.id) || null;
+      state.syncConflict = { local, server };
+      setNotice('A visit changed online. Choose which copy to keep in Records.', 'warning');
+    } else {
+      setNotice(error.message, 'warning');
+    }
+  }
+  render();
+}
+
+async function resolveSyncConflict(choice) {
+  const conflict = state.syncConflict;
+  if (!conflict) return;
+  const server = conflict.server;
+  const local = conflict.local;
+  try {
+    if (choice === 'server') {
+      await localPut({ ...server, synced: true });
+      setNotice('The online copy is now saved on this device.', 'success');
+    } else if (local) {
+      await localPut({ ...local, server_revision: server.server_revision, synced: false, updated_at: nowIso() });
+      setNotice('Your copy is kept and ready to sync again.', 'success');
+    }
+    state.syncConflict = null;
+    state.records = await localGetAll();
+  } catch (error) {
+    setNotice(error.message || 'The sync choice could not be saved.', 'warning');
+  }
+  render();
+}
+
+function csvCell(value) { return `"${String(value ?? '').replace(/"/g, '""')}"`; }
+function exportCsv() {
+  const headings = ['id', 'household_code', 'households_visited', 'people_present', 'water_source', 'follow_up_required', 'follow_up_type', 'note', 'status', 'created_at', 'updated_at'];
+  const body = state.records.map((record) => headings.map((heading) => csvCell(record[heading])).join(','));
+  const blob = new Blob([[headings.join(','), ...body].join('\n')], { type: 'text/csv;charset=utf-8' });
+  const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `fieldhealth-visits-${new Date().toISOString().slice(0, 10)}.csv`; link.click(); URL.revokeObjectURL(link.href);
+  setNotice('CSV export downloaded.', 'success');
+}
+
+async function seedDemo() {
+  state.records = await localGetAll();
+  if (state.records.length) return;
+  const examples = [
+    { id: 'demo-001', household_code: 'HH-DEMO-001', households_visited: 1, people_present: 4, water_source: 'borehole', follow_up_required: false, follow_up_type: '', note: 'Fictional demo record: household uses a borehole and reported no urgent concern.', status: 'confirmed', synced: false },
+    { id: 'demo-002', household_code: 'HH-DEMO-002', households_visited: 1, people_present: 3, water_source: 'well', follow_up_required: true, follow_up_type: 'health_education', note: 'Fictional demo record: family requested a follow-up on safe water treatment.', status: 'confirmed', synced: false }
+  ];
+  for (const example of examples) await localPut({ ...emptyRecord(), ...example, created_at: new Date(Date.now() - 86400000).toISOString(), updated_at: new Date(Date.now() - 3600000).toISOString() });
+  state.records = await localGetAll();
+}
+
+async function installApp() {
+  if (!state.installPrompt) return;
+  state.installPrompt.prompt();
+  await state.installPrompt.userChoice;
+  state.installPrompt = null;
+  render();
+}
+
+function updateVisitActionState(form) {
+  updateCurrentFromForm(form);
+  const submit = form.querySelector('button[type="submit"]');
+  if (!submit) return;
+  const record = state.current || emptyRecord();
+  const issues = qualityIssues(record);
+  const confirmed = issues.length === 0;
+  submit.textContent = issues.length ? 'Save draft' : (record.status === 'confirmed' ? 'Save changes' : 'Confirm visit');
+  submit.classList.toggle('confirm-button', confirmed);
+  updateVisitFieldFeedback(form);
+}
+
+function applyCaptureMode(form) {
+  const manual = state.captureMode === 'manual';
+  form.classList.toggle('manual-mode', manual);
+  const speakButton = form.querySelector('#mode-speak');
+  const manualButton = form.querySelector('#mode-manual');
+  speakButton?.classList.toggle('active', !manual);
+  manualButton?.classList.toggle('active', manual);
+  speakButton?.setAttribute('aria-pressed', String(!manual));
+  manualButton?.setAttribute('aria-pressed', String(manual));
+  const help = form.querySelector('#capture-mode-help');
+  if (help) help.textContent = manual
+    ? 'Manual mode is selected. Complete the fields below, then confirm the visit.'
+    : 'Speak mode is selected. Use the microphone, edit the note, then review it with AI.';
+  arrangeVisitCapture(form);
+  updateVisitFieldFeedback(form);
+}
+
+function arrangeVisitCapture(form) {
+  const mode = form.querySelector('#capture-mode');
+  const noteHeading = form.querySelector('.note-heading');
+  const noteHelp = form.querySelector('.note-heading + .field-help');
+  const textarea = form.querySelector('textarea[name="note"]');
+  const panel = form.querySelector('#visit-ai-panel');
+  const divider = form.querySelector('.form-divider');
+  if (!mode || !noteHeading || !noteHelp || !textarea || !divider) return;
+  let capture = form.querySelector('#speak-capture-area');
+  if (state.captureMode === 'speak') {
+    if (!capture) {
+      capture = document.createElement('section');
+      capture.id = 'speak-capture-area';
+      capture.className = 'speak-capture-area';
+      mode.after(capture);
+    }
+    [noteHeading, noteHelp, textarea, panel].filter(Boolean).forEach((node) => capture.append(node));
+  } else {
+    if (capture) capture.remove();
+    divider.after(noteHeading, noteHelp, textarea, panel);
+  }
+}
+
+function updateVisitFieldFeedback(form) {
+  const showIssues = (state.captureMode === 'speak' && state.aiHasAnalyzed) || Boolean(duplicateVisit(state.current || emptyRecord()));
+  const issues = showIssues ? fieldIssueMap(state.current || emptyRecord()) : {};
+  form.querySelectorAll('[name]').forEach((field) => {
+    if (!field.id) field.id = `visit-${field.name}`;
+    field.closest('label')?.setAttribute('for', field.id);
+    const label = field.closest('label');
+    if (!label) return;
+    const message = issues[field.name];
+    label.classList.toggle('field-missing', Boolean(message));
+    if (message) {
+      let error = label.querySelector('.field-error');
+      if (!error) {
+        error = document.createElement('span');
+        error.className = 'field-error';
+        label.append(error);
+      }
+      error.id = `field-error-${field.name}`;
+      error.innerHTML = `<span aria-hidden="true">!</span>${esc(message)}`;
+      field.setAttribute('aria-invalid', 'true');
+      field.setAttribute('aria-describedby', error.id);
+    } else {
+      label.querySelector('.field-error')?.remove();
+      field.removeAttribute('aria-invalid');
+      field.removeAttribute('aria-describedby');
+    }
+  });
+  let summary = form.querySelector('#visit-error-summary');
+  const messages = Object.values(issues);
+  if (messages.length) {
+    if (!summary) {
+      summary = document.createElement('div');
+      summary.id = 'visit-error-summary';
+      summary.className = 'visit-error-summary';
+      summary.setAttribute('role', 'alert');
+      summary.setAttribute('aria-live', 'polite');
+      summary.tabIndex = -1;
+      form.querySelector('#capture-mode')?.after(summary);
+    }
+    const firstField = Object.keys(issues)[0];
+    summary.innerHTML = `<strong>Needs attention</strong><span>${messages.length} field${messages.length === 1 ? '' : 's'} still need your input before confirmation. <a href="#visit-${esc(firstField)}">Review the first one</a></span>`;
+  } else {
+    summary?.remove();
+  }
+}
+
+function enhanceVisitAssistant(form) {
+  const textarea = form.querySelector('textarea[name="note"]');
+  if (!textarea || $('#visit-ai-panel')) return;
+  form.querySelectorAll('.form-card-heading .eyebrow').forEach((element) => {
+    if (/^Step\s+\d+$/i.test(element.textContent.trim())) element.remove();
+  });
+  const headings = form.querySelectorAll('.form-card-heading h3');
+  if (headings[0]) headings[0].textContent = 'Visit details';
+  if (headings[1]) headings[1].textContent = 'Observation note';
+  const formVoice = form.querySelector('#form-voice');
+  if (formVoice) formVoice.innerHTML = `${micIcon()}<span>${state.listening ? 'Listening…' : 'Speak note'}</span>`;
+  const requiredNote = form.querySelector('.required-note');
+  if (requiredNote) requiredNote.textContent = 'Complete what you know';
+  const water = form.querySelector('select[name="water_source"]');
+  if (water && !water.querySelector('option[value="not_recorded"]')) {
+    const option = document.createElement('option');
+    option.value = 'not_recorded';
+    option.textContent = 'Not recorded';
+    water.append(option);
+  }
+  if (water && state.current?.water_source) water.value = state.current.water_source;
+  const followUp = form.querySelector('[name="follow_up_type"]');
+  if (followUp && followUp.tagName === 'INPUT') {
+    const select = document.createElement('select');
+    select.name = 'follow_up_type';
+    select.innerHTML = '<option value="">Choose one</option><option value="health_education">Health education</option><option value="administrative">Administrative</option><option value="other">Other</option>';
+    select.value = ['health_education', 'administrative', 'other'].includes(state.current?.follow_up_type) ? state.current.follow_up_type : '';
+    followUp.replaceWith(select);
+  }
+  form.querySelector('.assistant-tip')?.remove();
+  if (state.records.some((record) => record.id === state.current?.id) && !form.querySelector('#delete-visit')) {
+    const actions = form.querySelector('.form-actions');
+    const submit = actions?.querySelector('button[type="submit"]');
+    const deleteButton = document.createElement('button');
+    deleteButton.id = 'delete-visit';
+    deleteButton.className = 'button danger';
+    deleteButton.dataset.action = 'delete-visit';
+    deleteButton.type = 'button';
+    deleteButton.textContent = 'Delete visit';
+    if (actions && submit) actions.insertBefore(deleteButton, submit);
+  }
+  form.insertAdjacentHTML('afterbegin', `<section id="capture-mode" class="capture-mode" aria-labelledby="capture-mode-title"><div><p class="eyebrow accent">Choose how to capture</p><h3 id="capture-mode-title">Speak or fill the form</h3><p class="capture-mode-copy">Use your voice to fill the note and let AI suggest fields, or enter the form yourself.</p></div><div class="capture-mode-actions"><button id="mode-speak" class="capture-mode-button" type="button">Speak to fill form</button><button id="mode-manual" class="capture-mode-button secondary-mode" type="button">Fill manually</button></div><p id="capture-mode-help" class="hint"></p></section>`);
+  $('#mode-speak')?.addEventListener('click', () => { state.captureMode = 'speak'; applyCaptureMode(form); });
+  $('#mode-manual')?.addEventListener('click', () => { state.captureMode = 'manual'; applyCaptureMode(form); });
+  applyCaptureMode(form);
+  textarea.insertAdjacentHTML('afterend', `<section id="visit-ai-panel" class="visit-ai-panel" aria-labelledby="visit-ai-title"><div class="visit-ai-heading"><div class="ai-badge">AI</div><div><p class="eyebrow accent">FieldHealth AI</p><h3 id="visit-ai-title">Fill the visit details with AI</h3><p>Speak or type above, edit the words while they are still fresh, then let AI fill the existing fields below.</p></div></div><div class="visit-ai-actions"><span class="hint">Your note stays editable. AI will not replace fields you have already entered.</span><button id="visit-ai-analyze" class="button primary" type="button" ${state.aiBusy ? 'disabled' : ''}>${state.aiBusy ? 'Analyzing…' : 'Analyze & fill visit details'}</button></div>${state.aiResult ? aiResultMarkup(state.aiResult) : state.aiHasAnalyzed ? '<div class="visit-ai-empty"><strong>Fields filled below.</strong> Review anything marked Needs attention.</div>' : '<div class="visit-ai-empty">No suggestions yet. Complete your note first, then analyze it.</div>'}</section>`);
+  $('#visit-ai-analyze')?.addEventListener('click', analyzeNote);
+  $('#visit-ai-panel [data-action="use-extraction"]')?.addEventListener('click', applyExtraction);
+  $('#visit-ai-panel [data-action="clear-ai"]')?.addEventListener('click', () => { state.aiResult = null; render(); });
+  arrangeVisitCapture(form);
+  updateVisitActionState(form);
+}
+
+function settingsView() {
+  if (!state.publicDemo) return privateSettingsView();
+  return `<section class="page-intro"><div><p class="eyebrow accent">Settings</p><h2>Workspace settings</h2><p class="lede">Everything is ready for the public hackathon demo.</p></div></section><section class="settings-grid"><div class="card public-demo-card"><p class="eyebrow accent">Public judge demo</p><h3>Ready to try</h3><p class="muted">Online services are open for this hackathon demo. No access code is needed.</p><div class="public-demo-status"><span class="status-mark online" aria-hidden="true"></span><strong>AI and sync are available</strong></div></div><div class="card"><p class="eyebrow accent">How it works</p><h3>Try the complete flow</h3><p class="muted">Create a household visit, speak or type your notes, review the AI proposal, confirm the details, and export the records as CSV.</p></div></section>`;
+}
+
+function bindViewEvents() {
+  document.querySelectorAll('[data-route]').forEach((element) => element.addEventListener('click', (event) => { event.preventDefault(); setRoute(element.dataset.route); }));
+  document.querySelectorAll('[data-action="new-visit"]').forEach((element) => element.addEventListener('click', () => { state.current = emptyRecord(); state.captureMode = 'speak'; state.manualFields = new Set(); state.aiHasAnalyzed = false; state.aiResult = null; setRoute('visit'); }));
+  document.querySelectorAll('[data-action="edit-record"]').forEach((element) => element.addEventListener('click', () => { const existing = state.records.find((record) => record.id === element.dataset.id); state.current = existing || emptyRecord(); state.captureMode = 'speak'; state.manualFields = existing ? new Set(fields.map(([key]) => key)) : new Set(); state.aiHasAnalyzed = false; state.aiResult = null; setRoute('visit'); }));
+  document.querySelectorAll('[data-action="cancel-visit"]').forEach((element) => element.addEventListener('click', () => setRoute('records')));
+  document.querySelectorAll('[data-action="export-csv"]').forEach((element) => element.addEventListener('click', exportCsv));
+  document.querySelectorAll('[data-action="use-extraction"]').forEach((element) => element.addEventListener('click', applyExtraction));
+  document.querySelectorAll('[data-action="clear-ai"]').forEach((element) => element.addEventListener('click', () => { state.aiResult = null; render(); }));
+  document.querySelectorAll('[data-action="use-server-conflict"]').forEach((element) => element.addEventListener('click', () => resolveSyncConflict('server')));
+  document.querySelectorAll('[data-action="keep-local-conflict"]').forEach((element) => element.addEventListener('click', () => resolveSyncConflict('local')));
+  document.querySelectorAll('[data-action="save-token"]').forEach((element) => element.addEventListener('click', async () => { const value = $('#demo-code')?.value.trim() || ''; if (value) sessionStorage.setItem(DEMO_CODE_KEY, value); else sessionStorage.removeItem(DEMO_CODE_KEY); state.serverOnline = false; try { await api('/api/health'); state.serverOnline = true; setNotice('Demo code saved for this session.', 'success'); } catch (error) { setNotice(error.message, 'warning'); } render(); }));
+  document.querySelectorAll('[data-action="clear-token"]').forEach((element) => element.addEventListener('click', () => { sessionStorage.removeItem(DEMO_CODE_KEY); state.serverOnline = false; setNotice('Demo access cleared.', 'info'); render(); }));
+  document.querySelectorAll('[data-action="install-app"]').forEach((element) => element.addEventListener('click', installApp));
+  const form = $('#visit-form'); if (form) {
+    enhanceVisitAssistant(form);
+    form.addEventListener('click', (event) => { if (event.target.closest('[data-action="delete-visit"]')) deleteCurrent(); });
+    form.addEventListener('submit', saveCurrent);
+    const refreshVisitState = (event) => { if (event.target?.name) state.manualFields.add(event.target.name); updateCurrentFromForm(form); updateVisitActionState(form); };
+    form.addEventListener('input', refreshVisitState);
+    form.addEventListener('change', refreshVisitState);
+    form.addEventListener('blur', refreshVisitState, true);
+  }
+  document.querySelectorAll('label').forEach((label) => {
+    const field = label.querySelector('input, select, textarea');
+    if (field) {
+      if (!field.id) field.id = field.name ? `field-${field.name}` : `field-${Math.random().toString(16).slice(2)}`;
+      label.setAttribute('for', field.id);
+    }
+  });
+  const note = $('#ai-note'); if (note) note.addEventListener('input', () => { state.aiNote = note.value; });
+  $('#analyze')?.addEventListener('click', analyzeNote); $('#ai-voice')?.addEventListener('click', () => startVoice('assistant')); $('#form-voice')?.addEventListener('click', () => startVoice('form')); $('#sync')?.addEventListener('click', syncRecords);
+}
+
+async function refreshHealth() {
+  try {
+    const health = await api('/api/health');
+    state.serverOnline = true;
+    state.publicDemo = health.public_demo === true;
+  } catch {
+    state.serverOnline = false;
+    state.publicDemo = false;
+  }
+  render();
+}
+
+window.addEventListener('online', refreshHealth);
+window.addEventListener('offline', () => { state.serverOnline = false; render(); setNotice('Offline mode: new records will stay on this device.', 'info'); });
+window.addEventListener('beforeinstallprompt', (event) => { event.preventDefault(); state.installPrompt = event; render(); });
+window.addEventListener('hashchange', () => { const route = location.hash.slice(1); if (['dashboard', 'visit', 'records', 'reports', 'settings'].includes(route) && route !== state.route) setRoute(route); });
+
+(async function boot() {
+  try {
+    document.body.innerHTML = shellMarkup();
+    await seedDemo();
+    render();
+    await refreshHealth();
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+    if (location.hash) window.dispatchEvent(new Event('hashchange'));
+  } catch (error) {
+    document.body.innerHTML = `<main class="boot-error"><h1>FieldHealth could not start</h1><p>Your saved information was not changed. Refresh the page or use a browser with offline storage enabled.</p><button class="button primary" type="button" onclick="location.reload()">Refresh FieldHealth</button></main>`;
+  }
+})();

@@ -258,7 +258,7 @@ class Handler(SimpleHTTPRequestHandler):
         return True
     def do_GET(self):
         if self.path == '/':
-            self.path = '/index-v2.html'
+            self.path = '/index.html'
         if self.path=='/api/health': return self.reply(200,{'status':'ok','public_demo':public_demo_enabled()})
         if self.path=='/api/visits':
             if self.authorized(): self.reply(200,{'visits':all_visits()})

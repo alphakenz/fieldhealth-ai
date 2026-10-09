@@ -39,10 +39,10 @@ fieldhealth-ai/
 │  ├─ migrations/0001_initial.sql
 │  ├─ tests/
 │  └─ requirements.txt
-├─ frontend/
-│  ├─ index.html  manifest.webmanifest  sw.js
-│  ├─ css/app.css
-│  └─ js/ (app.js, router.js, db.js, sync.js, api.js, rules.js, views/*, ui/*)
+├─ public/
+│  ├─ index.html  manifest.webmanifest  sw.js  icon.svg
+│  ├─ styles.css
+│  └─ app.js
 ├─ shared/completeness_fixtures.json
 ├─ eval/ (gold_synthetic.jsonl, run_eval.py, results/ (git-ignored until author commits))
 └─ e2e/ (playwright tests)
