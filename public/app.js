@@ -493,12 +493,19 @@ function exportCsv() {
 
 async function seedDemo() {
   state.records = await localGetAll();
-  if (state.records.length) return;
+  if (state.records.some((record) => !String(record.id || '').startsWith('demo-'))) return;
   const examples = [
     { id: 'demo-001', household_code: 'HH-DEMO-001', households_visited: 1, people_present: 4, water_source: 'borehole', follow_up_required: false, follow_up_type: '', note: 'Fictional demo record: household uses a borehole and reported no urgent concern.', status: 'confirmed', synced: false },
-    { id: 'demo-002', household_code: 'HH-DEMO-002', households_visited: 1, people_present: 3, water_source: 'well', follow_up_required: true, follow_up_type: 'health_education', note: 'Fictional demo record: family requested a follow-up on safe water treatment.', status: 'confirmed', synced: false }
+    { id: 'demo-002', household_code: 'HH-DEMO-002', households_visited: 1, people_present: 3, water_source: 'well', follow_up_required: true, follow_up_type: 'health_education', note: 'Fictional demo record: family requested a follow-up on safe water treatment.', status: 'confirmed', synced: false },
+    { id: 'demo-003', household_code: 'HH-DEMO-003', households_visited: 1, people_present: 6, water_source: 'tap', follow_up_required: false, follow_up_type: '', note: 'Fictional demo record: household reported reliable tap water and no follow-up need.', status: 'confirmed', synced: false },
+    { id: 'demo-004', household_code: 'HH-DEMO-004', households_visited: 1, people_present: 2, water_source: 'rainwater', follow_up_required: true, follow_up_type: 'administrative', note: 'Fictional demo record: household requested an administrative follow-up about water storage.', status: 'confirmed', synced: false },
+    { id: 'demo-005', household_code: 'HH-DEMO-005', households_visited: 1, people_present: 7, water_source: 'surface_water', follow_up_required: true, follow_up_type: 'other', note: 'Fictional demo record: household uses surface water and requested a general follow-up.', status: 'confirmed', synced: false }
   ];
-  for (const example of examples) await localPut({ ...emptyRecord(), ...example, created_at: new Date(Date.now() - 86400000).toISOString(), updated_at: new Date(Date.now() - 3600000).toISOString() });
+  const existingIds = new Set(state.records.map((record) => record.id));
+  for (const example of examples) {
+    if (existingIds.has(example.id)) continue;
+    await localPut({ ...emptyRecord(), ...example, created_at: new Date(Date.now() - 86400000).toISOString(), updated_at: new Date(Date.now() - 3600000).toISOString() });
+  }
   state.records = await localGetAll();
 }
 

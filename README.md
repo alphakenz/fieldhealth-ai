@@ -1,5 +1,7 @@
 # FieldHealth AI
 
+![FieldHealth AI banner](docs/image.png)
+
 **Less time typing. More time caring.**
 
 An offline household outreach workspace for synthetic-data demonstrations. Capture visits on a phone, review AI extraction, confirm records, synchronize with a team server, and export supervisor reports.
@@ -15,7 +17,7 @@ export APP_TOKEN='choose-a-long-random-team-key'
 python server.py
 ```
 
-Open http://localhost:8000. In private mode, use **Settings → Demo access** to enter the code configured for the server. For the hackathon's public demo, set `PUBLIC_DEMO=true`; everyone can use sync and inference without entering a code. The app starts with two fictional examples so judges can explore the dashboard immediately. The browser must open the app online once before offline reload works.
+Open http://localhost:8000. In private mode, use **Settings → Demo access** to enter the code configured for the server. For the hackathon's public demo, set `PUBLIC_DEMO=true`; everyone can use sync and inference without entering a code. The app starts with five fictional examples so judges can explore the dashboard immediately. The browser must open the app online once before offline reload works.
 
 ## Enable genuine AI extraction
 
