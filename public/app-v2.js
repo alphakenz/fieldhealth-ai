@@ -226,7 +226,6 @@ function shellMarkup() {
         <div><p class="eyebrow">FieldHealth AI</p><h1 id="page-title">Today</h1></div>
         <div class="topbar-actions">${connectionMarkup()}<button id="sync" class="button secondary" type="button">Sync <span id="pending">0</span></button></div>
       </header>
-      <div class="scope-notice" role="note"><span class="scope-icon" aria-hidden="true">i</span><span><strong>Fictional data</strong> · Administrative reporting only</span></div>
       <main id="main" tabindex="-1"></main>
       <nav class="mobile-nav" aria-label="Mobile navigation">${navMarkup()}</nav>
       <div id="notice" class="notice" role="status" hidden></div>
