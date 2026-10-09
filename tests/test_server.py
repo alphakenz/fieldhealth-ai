@@ -54,7 +54,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(result['draft']['household_code'],'HH-016')
         self.assertEqual(result['draft']['households_visited'],1)
         self.assertEqual(result['draft']['people_present'],5)
-        self.assertIsNone(result['draft']['water_source'])
+        self.assertEqual(result['draft']['water_source'], 'not_recorded')
         self.assertTrue(result['draft']['follow_up_required'])
         self.assertEqual(result['extraction_mode'],'explicit_facts_fallback')
     def test_unconfigured_ai_has_no_fake_result(self):

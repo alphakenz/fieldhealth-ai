@@ -15,6 +15,7 @@ const state = {
   route: 'dashboard',
   records: [],
   current: null,
+  captureMode: 'speak',
   aiNote: '',
   aiResult: null,
   aiBusy: false,
@@ -249,7 +250,7 @@ async function saveCurrent(event) {
   state.current.synced = false;
   await localPut(state.current);
   state.records = await localGetAll();
-  setNotice(issues.length ? 'Draft saved. Finish the highlighted details before confirming.' : 'Visit saved on this device. Sync it when you are online.', issues.length ? 'warning' : 'success');
+  setNotice(issues.length ? 'Draft saved. Complete the missing fields, then confirm the visit.' : 'Visit confirmed on this device. Sync it when you are online.', issues.length ? 'warning' : 'success');
   setRoute('records');
 }
 
@@ -335,19 +336,65 @@ async function installApp() {
   render();
 }
 
+function updateVisitActionState(form) {
+  const submit = form.querySelector('button[type="submit"]');
+  if (!submit) return;
+  const record = state.current || emptyRecord();
+  const issues = qualityIssues(record);
+  const confirmed = issues.length === 0;
+  submit.textContent = issues.length ? 'Save draft' : (record.status === 'confirmed' ? 'Save changes' : 'Confirm visit');
+  submit.classList.toggle('confirm-button', confirmed);
+}
+
+function applyCaptureMode(form) {
+  const manual = state.captureMode === 'manual';
+  form.classList.toggle('manual-mode', manual);
+  const speakButton = form.querySelector('#mode-speak');
+  const manualButton = form.querySelector('#mode-manual');
+  speakButton?.classList.toggle('active', !manual);
+  manualButton?.classList.toggle('active', manual);
+  speakButton?.setAttribute('aria-pressed', String(!manual));
+  manualButton?.setAttribute('aria-pressed', String(manual));
+  const help = form.querySelector('#capture-mode-help');
+  if (help) help.textContent = manual
+    ? 'Manual mode is selected. Complete the fields below, then confirm the visit.'
+    : 'Speak mode is selected. Use the microphone, edit the note, then review it with AI.';
+}
+
 function enhanceVisitAssistant(form) {
   const textarea = form.querySelector('textarea[name="note"]');
   if (!textarea || $('#visit-ai-panel')) return;
+  form.querySelectorAll('.form-card-heading .eyebrow').forEach((element) => {
+    if (/^Step\s+\d+$/i.test(element.textContent.trim())) element.remove();
+  });
+  const headings = form.querySelectorAll('.form-card-heading h3');
+  if (headings[0]) headings[0].textContent = 'Visit details';
+  if (headings[1]) headings[1].textContent = 'Observation note';
+  const requiredNote = form.querySelector('.required-note');
+  if (requiredNote) requiredNote.textContent = 'Complete what you know';
+  const water = form.querySelector('select[name="water_source"]');
+  if (water && !water.querySelector('option[value="not_recorded"]')) {
+    const option = document.createElement('option');
+    option.value = 'not_recorded';
+    option.textContent = 'Not recorded';
+    water.append(option);
+  }
+  if (water && state.current?.water_source) water.value = state.current.water_source;
+  form.insertAdjacentHTML('afterbegin', `<section id="capture-mode" class="capture-mode" aria-labelledby="capture-mode-title"><div><p class="eyebrow accent">Choose how to capture</p><h3 id="capture-mode-title">Speak or fill the form</h3><p class="capture-mode-copy">Use your voice to fill the note and let AI suggest fields, or enter the form yourself.</p></div><div class="capture-mode-actions"><button id="mode-speak" class="capture-mode-button" type="button">Speak to fill form</button><button id="mode-manual" class="capture-mode-button secondary-mode" type="button">Fill manually</button></div><p id="capture-mode-help" class="hint"></p></section>`);
+  $('#mode-speak')?.addEventListener('click', () => { state.captureMode = 'speak'; applyCaptureMode(form); });
+  $('#mode-manual')?.addEventListener('click', () => { state.captureMode = 'manual'; applyCaptureMode(form); });
+  applyCaptureMode(form);
   textarea.insertAdjacentHTML('afterend', `<section id="visit-ai-panel" class="visit-ai-panel" aria-labelledby="visit-ai-title"><div class="visit-ai-heading"><div class="ai-badge">AI</div><div><p class="eyebrow accent">FieldHealth AI</p><h3 id="visit-ai-title">Review this note with the AI Field Assistant</h3><p>Speak or type above, edit the words while they are still fresh, then analyze the final note.</p></div></div><div class="visit-ai-actions"><span class="hint">Your note stays editable until you choose to apply suggestions.</span><button id="visit-ai-analyze" class="button primary" type="button" ${state.aiBusy ? 'disabled' : ''}>${state.aiBusy ? 'Analyzing…' : 'Analyze with AI'}</button></div>${state.aiResult ? aiResultMarkup(state.aiResult) : '<div class="visit-ai-empty">No suggestions yet. Complete your note first, then analyze it.</div>'}</section>`);
   $('#visit-ai-analyze')?.addEventListener('click', analyzeNote);
   $('#visit-ai-panel [data-action="use-extraction"]')?.addEventListener('click', applyExtraction);
   $('#visit-ai-panel [data-action="clear-ai"]')?.addEventListener('click', () => { state.aiResult = null; render(); });
+  updateVisitActionState(form);
 }
 
 function bindViewEvents() {
   document.querySelectorAll('[data-route]').forEach((element) => element.addEventListener('click', (event) => { event.preventDefault(); setRoute(element.dataset.route); }));
-  document.querySelectorAll('[data-action="new-visit"]').forEach((element) => element.addEventListener('click', () => { state.current = emptyRecord(); setRoute('visit'); }));
-  document.querySelectorAll('[data-action="edit-record"]').forEach((element) => element.addEventListener('click', () => { state.current = state.records.find((record) => record.id === element.dataset.id) || emptyRecord(); setRoute('visit'); }));
+  document.querySelectorAll('[data-action="new-visit"]').forEach((element) => element.addEventListener('click', () => { state.current = emptyRecord(); state.captureMode = 'speak'; setRoute('visit'); }));
+  document.querySelectorAll('[data-action="edit-record"]').forEach((element) => element.addEventListener('click', () => { state.current = state.records.find((record) => record.id === element.dataset.id) || emptyRecord(); state.captureMode = 'speak'; setRoute('visit'); }));
   document.querySelectorAll('[data-action="cancel-visit"]').forEach((element) => element.addEventListener('click', () => setRoute('records')));
   document.querySelectorAll('[data-action="export-csv"]').forEach((element) => element.addEventListener('click', exportCsv));
   document.querySelectorAll('[data-action="use-extraction"]').forEach((element) => element.addEventListener('click', applyExtraction));
@@ -355,7 +402,13 @@ function bindViewEvents() {
   document.querySelectorAll('[data-action="save-token"]').forEach((element) => element.addEventListener('click', async () => { const value = $('#demo-code')?.value.trim() || ''; if (value) sessionStorage.setItem(DEMO_CODE_KEY, value); else sessionStorage.removeItem(DEMO_CODE_KEY); state.serverOnline = false; try { await api('/api/health'); state.serverOnline = true; setNotice('Demo code saved for this session.', 'success'); } catch (error) { setNotice(error.message, 'warning'); } render(); }));
   document.querySelectorAll('[data-action="clear-token"]').forEach((element) => element.addEventListener('click', () => { sessionStorage.removeItem(DEMO_CODE_KEY); state.serverOnline = false; setNotice('Demo access cleared.', 'info'); render(); }));
   document.querySelectorAll('[data-action="install-app"]').forEach((element) => element.addEventListener('click', installApp));
-  const form = $('#visit-form'); if (form) { enhanceVisitAssistant(form); form.addEventListener('submit', saveCurrent); form.addEventListener('input', () => { updateCurrentFromForm(form); }); }
+  const form = $('#visit-form'); if (form) {
+    enhanceVisitAssistant(form);
+    form.addEventListener('submit', saveCurrent);
+    const refreshVisitState = () => { updateCurrentFromForm(form); updateVisitActionState(form); };
+    form.addEventListener('input', refreshVisitState);
+    form.addEventListener('change', refreshVisitState);
+  }
   const note = $('#ai-note'); if (note) note.addEventListener('input', () => { state.aiNote = note.value; });
   $('#analyze')?.addEventListener('click', analyzeNote); $('#ai-voice')?.addEventListener('click', () => startVoice('assistant')); $('#form-voice')?.addEventListener('click', () => startVoice('form')); $('#sync')?.addEventListener('click', syncRecords);
 }
