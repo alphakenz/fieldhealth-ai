@@ -253,3 +253,5 @@ tbody tr:last-child td { border-bottom: 0; }
   .speak-capture-area .small-button { width: 100%; }
   .visit-error-summary { align-items: flex-start; flex-direction: column; gap: 2px; }
 }
+.button.danger { border: 1px solid rgba(180, 35, 24, .24); background: var(--danger-bg); color: var(--danger); }
+.button.danger:hover { border-color: var(--danger); background: #ffe7e3; }

@@ -78,7 +78,16 @@ async function localGetAll() {
   const db = await openDb();
   return new Promise((resolve, reject) => {
     const request = db.transaction(APP_STORE, 'readonly').objectStore(APP_STORE).getAll();
-    request.onsuccess = () => resolve(request.result.map(normalizeRecord).sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at)));
+    request.onsuccess = () => resolve(request.result.filter((record) => !record.deleted).map(normalizeRecord).sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at)));
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function localGetDeleted() {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const request = db.transaction(APP_STORE, 'readonly').objectStore(APP_STORE).getAll();
+    request.onsuccess = () => resolve(request.result.filter((record) => record.deleted).map(normalizeRecord));
     request.onerror = () => reject(request.error);
   });
 }
@@ -120,6 +129,16 @@ async function api(path, options = {}) {
   return body;
 }
 
+function normalizedHouseholdCode(record) {
+  return String(record?.household_code || '').trim().toUpperCase();
+}
+
+function duplicateVisit(record) {
+  const householdCode = normalizedHouseholdCode(record);
+  if (!householdCode || !record?.visit_date) return null;
+  return state.records.find((candidate) => candidate.id !== record.id && normalizedHouseholdCode(candidate) === householdCode && candidate.visit_date === record.visit_date) || null;
+}
+
 function fieldIssueMap(record) {
   const issues = {};
   if (!record.household_code || !/^HH-[A-Za-z0-9-]{1,30}$/.test(record.household_code)) issues.household_code = 'Add a household code like HH-014.';
@@ -127,6 +146,8 @@ function fieldIssueMap(record) {
   if (record.people_present === null || record.people_present === '' || Number(record.people_present) < 0) issues.people_present = 'Add the number of people present.';
   if (!record.water_source) issues.water_source = 'Choose a water source.';
   if (record.follow_up_required && !record.follow_up_type) issues.follow_up_type = 'Choose a follow-up type.';
+  const duplicate = duplicateVisit(record);
+  if (duplicate) issues.household_code = `A visit for ${duplicate.household_code} already exists for ${duplicate.visit_date}.`;
   return issues;
 }
 
@@ -255,6 +276,12 @@ function updateCurrentFromForm(form) {
 async function saveCurrent(event) {
   event.preventDefault();
   updateCurrentFromForm(event.currentTarget);
+  const duplicate = duplicateVisit(state.current);
+  if (duplicate) {
+    setNotice(`Duplicate visit: ${duplicate.household_code} already has a record for ${duplicate.visit_date}.`, 'warning');
+    render();
+    return;
+  }
   const issues = qualityIssues(state.current);
   state.current.status = issues.length ? 'draft' : 'confirmed';
   state.current.synced = false;
@@ -262,6 +289,25 @@ async function saveCurrent(event) {
   state.records = await localGetAll();
   setNotice(issues.length ? 'Draft saved. Complete the missing fields, then confirm the visit.' : 'Visit confirmed on this device. Sync it when you are online.', issues.length ? 'warning' : 'success');
   setRoute('records');
+}
+
+async function deleteCurrent() {
+  const record = state.current;
+  if (!record || !state.records.some((candidate) => candidate.id === record.id)) return;
+  if (!window.confirm(`Delete the visit for ${record.household_code || 'this household'}? This cannot be undone.`)) return;
+  try {
+    if (record.synced || Number(record.server_revision) > 0) {
+      await localPut({ ...record, deleted: true, synced: false, updated_at: nowIso() });
+    } else {
+      await localDelete(record.id);
+    }
+    state.records = await localGetAll();
+    state.current = null;
+    setNotice('Visit deleted.', 'success');
+    setRoute('records');
+  } catch (error) {
+    setNotice(error.message || 'The visit could not be deleted.', 'warning');
+  }
 }
 
 function applyExtraction(options = {}) {
@@ -326,6 +372,15 @@ async function analyzeNote() {
 async function syncRecords() {
   if (!navigator.onLine) { setNotice('You are offline. Records are safe on this device and will sync later.', 'info'); return; }
   try {
+    const deleted = await localGetDeleted();
+    for (const record of deleted) {
+      try {
+        await api(`/api/visits/${encodeURIComponent(record.id)}?server_revision=${encodeURIComponent(record.server_revision || 0)}`, { method: 'DELETE' });
+      } catch (error) {
+        if (!String(error.message || '').toLowerCase().includes('not found')) throw error;
+      }
+      await localDelete(record.id);
+    }
     const pending = state.records.filter((record) => !record.synced);
     for (const record of pending) { const allowedFollowUp = ['health_education', 'administrative', 'other']; const serverRecord = { ...record, follow_up_type: record.follow_up_required ? (allowedFollowUp.includes(record.follow_up_type) ? record.follow_up_type : 'other') : null }; const result = await api('/api/visits', { method: 'POST', body: JSON.stringify(serverRecord) }); await localPut({ ...(result.visit || serverRecord), synced: true }); }
     const remote = await api('/api/visits');
@@ -365,6 +420,7 @@ async function installApp() {
 }
 
 function updateVisitActionState(form) {
+  updateCurrentFromForm(form);
   const submit = form.querySelector('button[type="submit"]');
   if (!submit) return;
   const record = state.current || emptyRecord();
@@ -416,7 +472,7 @@ function arrangeVisitCapture(form) {
 }
 
 function updateVisitFieldFeedback(form) {
-  const showIssues = state.captureMode === 'speak' && state.aiHasAnalyzed;
+  const showIssues = (state.captureMode === 'speak' && state.aiHasAnalyzed) || Boolean(duplicateVisit(state.current || emptyRecord()));
   const issues = showIssues ? fieldIssueMap(state.current || emptyRecord()) : {};
   form.querySelectorAll('[name]').forEach((field) => {
     const label = field.closest('label');
@@ -474,6 +530,17 @@ function enhanceVisitAssistant(form) {
     water.append(option);
   }
   if (water && state.current?.water_source) water.value = state.current.water_source;
+  if (state.records.some((record) => record.id === state.current?.id) && !form.querySelector('#delete-visit')) {
+    const actions = form.querySelector('.form-actions');
+    const submit = actions?.querySelector('button[type="submit"]');
+    const deleteButton = document.createElement('button');
+    deleteButton.id = 'delete-visit';
+    deleteButton.className = 'button danger';
+    deleteButton.dataset.action = 'delete-visit';
+    deleteButton.type = 'button';
+    deleteButton.textContent = 'Delete visit';
+    if (actions && submit) actions.insertBefore(deleteButton, submit);
+  }
   form.insertAdjacentHTML('afterbegin', `<section id="capture-mode" class="capture-mode" aria-labelledby="capture-mode-title"><div><p class="eyebrow accent">Choose how to capture</p><h3 id="capture-mode-title">Speak or fill the form</h3><p class="capture-mode-copy">Use your voice to fill the note and let AI suggest fields, or enter the form yourself.</p></div><div class="capture-mode-actions"><button id="mode-speak" class="capture-mode-button" type="button">Speak to fill form</button><button id="mode-manual" class="capture-mode-button secondary-mode" type="button">Fill manually</button></div><p id="capture-mode-help" class="hint"></p></section>`);
   $('#mode-speak')?.addEventListener('click', () => { state.captureMode = 'speak'; applyCaptureMode(form); });
   $('#mode-manual')?.addEventListener('click', () => { state.captureMode = 'manual'; applyCaptureMode(form); });
@@ -494,6 +561,7 @@ function bindViewEvents() {
   document.querySelectorAll('[data-action="export-csv"]').forEach((element) => element.addEventListener('click', exportCsv));
   document.querySelectorAll('[data-action="use-extraction"]').forEach((element) => element.addEventListener('click', applyExtraction));
   document.querySelectorAll('[data-action="clear-ai"]').forEach((element) => element.addEventListener('click', () => { state.aiResult = null; render(); }));
+  document.querySelectorAll('[data-action="delete-visit"]').forEach((element) => element.addEventListener('click', deleteCurrent));
   document.querySelectorAll('[data-action="save-token"]').forEach((element) => element.addEventListener('click', async () => { const value = $('#demo-code')?.value.trim() || ''; if (value) sessionStorage.setItem(DEMO_CODE_KEY, value); else sessionStorage.removeItem(DEMO_CODE_KEY); state.serverOnline = false; try { await api('/api/health'); state.serverOnline = true; setNotice('Demo code saved for this session.', 'success'); } catch (error) { setNotice(error.message, 'warning'); } render(); }));
   document.querySelectorAll('[data-action="clear-token"]').forEach((element) => element.addEventListener('click', () => { sessionStorage.removeItem(DEMO_CODE_KEY); state.serverOnline = false; setNotice('Demo access cleared.', 'info'); render(); }));
   document.querySelectorAll('[data-action="install-app"]').forEach((element) => element.addEventListener('click', installApp));
@@ -503,6 +571,7 @@ function bindViewEvents() {
     const refreshVisitState = (event) => { if (event.target?.name) state.manualFields.add(event.target.name); updateCurrentFromForm(form); updateVisitActionState(form); };
     form.addEventListener('input', refreshVisitState);
     form.addEventListener('change', refreshVisitState);
+    form.addEventListener('blur', refreshVisitState, true);
   }
   const note = $('#ai-note'); if (note) note.addEventListener('input', () => { state.aiNote = note.value; });
   $('#analyze')?.addEventListener('click', analyzeNote); $('#ai-voice')?.addEventListener('click', () => startVoice('assistant')); $('#form-voice')?.addEventListener('click', () => startVoice('form')); $('#sync')?.addEventListener('click', syncRecords);

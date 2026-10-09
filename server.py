@@ -10,6 +10,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
+from urllib.parse import parse_qs, urlsplit
 
 ROOT = Path(__file__).parent
 DB_PATH = os.environ.get('DB_PATH', str(ROOT / 'data' / 'fieldhealth.db'))
@@ -28,6 +29,9 @@ Return only JSON.''' % json.dumps(SCHEMA)
 NUMBER_WORDS = {'zero':0,'one':1,'two':2,'three':3,'four':4,'five':5,'six':6,'seven':7,'eight':8,'nine':9,'ten':10,'eleven':11,'twelve':12,'thirteen':13,'fourteen':14,'fifteen':15,'sixteen':16,'seventeen':17,'eighteen':18,'nineteen':19,'twenty':20}
 
 class Conflict(Exception):
+    def __init__(self, record): self.record = record
+
+class DuplicateRecord(Exception):
     def __init__(self, record): self.record = record
 
 def connect():
@@ -104,6 +108,13 @@ def save_visit(v):
                     db.commit()
                     return old
             raise Conflict(json.loads(row[1]) if row else None)
+        key = (v.get('household_code','').strip().upper(), v.get('visit_date'))
+        if key[0]:
+            for duplicate_row in db.execute('SELECT payload FROM visits WHERE id<>?', (v['id'],)):
+                duplicate = json.loads(duplicate_row[0])
+                duplicate_key = (str(duplicate.get('household_code','')).strip().upper(), duplicate.get('visit_date'))
+                if duplicate_key == key:
+                    raise DuplicateRecord(duplicate)
         stored={**v,'server_revision':revision+1,'sync_state':'synced','synced_at':dt.datetime.now(dt.timezone.utc).isoformat()}
         db.execute('INSERT INTO visits VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,payload=excluded.payload',
                    (v['id'],revision+1,json.dumps(stored)))
@@ -119,6 +130,26 @@ def all_visits():
     db = connect()
     try:
         return [json.loads(r[0]) for r in db.execute('SELECT payload FROM visits')]
+    finally:
+        db.close()
+
+def delete_visit(record_id, expected_revision=None):
+    uuid.UUID(record_id)
+    db = connect()
+    try:
+        db.execute('BEGIN IMMEDIATE')
+        row = db.execute('SELECT revision,payload FROM visits WHERE id=?', (record_id,)).fetchone()
+        if not row:
+            raise KeyError('Visit not found')
+        revision, payload = row[0], json.loads(row[1])
+        if expected_revision is not None and int(expected_revision) != revision:
+            raise Conflict(payload)
+        db.execute('DELETE FROM visits WHERE id=?', (record_id,))
+        db.commit()
+        return payload
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
 
@@ -228,6 +259,22 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if self.path.startswith('/api/'): return self.reply(404,{'error':'Not found'})
         super().do_GET()
+    def do_DELETE(self):
+        parsed = urlsplit(self.path)
+        parts = parsed.path.rstrip('/').split('/')
+        if len(parts) != 4 or parts[1:3] != ['api', 'visits']:
+            return self.reply(404,{'error':'Not found'})
+        if not self.authorized(): return
+        try:
+            expected = parse_qs(parsed.query).get('server_revision',[None])[0]
+            deleted = delete_visit(parts[3], expected)
+            self.reply(200,{'deleted_id':deleted['id']})
+        except KeyError:
+            self.reply(404,{'error':'Visit not found'})
+        except Conflict as e:
+            self.reply(409,{'error':'Record changed on another device. Review both versions before deleting.','server_record':e.record})
+        except (ValueError,TypeError) as e:
+            self.reply(422,{'error':str(e)[:200]})
     def do_POST(self):
         if self.path not in ['/api/visits','/api/extract']: return self.reply(404,{'error':'Not found'})
         if not self.authorized(): return
@@ -239,6 +286,7 @@ class Handler(SimpleHTTPRequestHandler):
             if self.path=='/api/visits': return self.reply(200,{'visit':save_visit(payload)})
             if payload.get('synthetic_data_confirmed') is not True: raise ValueError('Confirm synthetic data before using AI')
             self.reply(200,extract(payload.get('note')))
+        except DuplicateRecord as e: self.reply(409,{'error':f"A visit for {e.record.get('household_code')} already exists for {e.record.get('visit_date')}.",'duplicate_record':e.record})
         except Conflict as e: self.reply(409,{'error':'Record changed on another device. Review both versions.','server_record':e.record})
         except (ValueError,KeyError,TypeError) as e: self.reply(422,{'error':str(e)[:200]})
         except RuntimeError as e: self.reply(503,{'error':str(e)})

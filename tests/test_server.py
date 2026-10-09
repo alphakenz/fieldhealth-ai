@@ -24,6 +24,17 @@ class WorkflowTests(unittest.TestCase):
         self.visit['water_source']=None
         with self.assertRaises(ValueError):server.save_visit(self.visit)
         self.visit['status']='draft';self.assertEqual(server.save_visit(self.visit)['status'],'draft')
+    def test_duplicate_household_visit_is_blocked_for_same_date(self):
+        server.save_visit(self.visit)
+        duplicate={**self.visit,'id':'2b99a2c8-7f3a-4c5e-9d1a-3dbd7f0c7b11','server_revision':0,'household_code':'HH-014'}
+        with self.assertRaises(server.DuplicateRecord):server.save_visit(duplicate)
+        different_date={**duplicate,'visit_date':'2026-10-10'}
+        self.assertEqual(server.save_visit(different_date)['visit_date'],'2026-10-10')
+    def test_delete_visit_removes_saved_record(self):
+        saved=server.save_visit(self.visit)
+        deleted=server.delete_visit(self.visit['id'],saved['server_revision'])
+        self.assertEqual(deleted['id'],self.visit['id'])
+        self.assertEqual(server.all_visits(),[])
     def test_strict_model_types(self):
         extracted={k:self.visit[k] for k in server.FIELDS};extracted['people_present']=True
         with self.assertRaises(ValueError):server.validate_extraction(extracted)
