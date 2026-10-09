@@ -4,6 +4,10 @@
 
 An offline household outreach workspace for synthetic-data demonstrations. Capture visits on a phone, review AI extraction, confirm records, synchronize with a team server, and export supervisor reports.
 
+## Judge guide
+
+Start with the [documentation hub](docs/README.md), then review the [submission write-up](docs/submission.md) and [verification record](docs/verification.md). The detailed product, technical, flow, design, schema, and implementation documents are linked from the hub.
+
 ## Run locally
 
 Python 3.11 or newer is the only application runtime dependency.
@@ -90,7 +94,7 @@ The prototype has one shared team workspace, not individual worker accounts, rol
 
 It does not diagnose, prescribe, integrate with DHIS2, provide on-device inference, implement background closed-app sync, or claim production clinical readiness. AI accuracy, provider eligibility, live deployment, and multi-device field performance require real verification before submission.
 
-See [demo walkthrough](docs/demo-walkthrough.md), [submission draft](docs/submission.md), and [architecture](docs/architecture.md).
+See the [documentation hub](docs/README.md), [submission write-up](docs/submission.md), and [verification record](docs/verification.md).
 
 ## Primary references
 
