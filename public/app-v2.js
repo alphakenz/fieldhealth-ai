@@ -16,6 +16,8 @@ const state = {
   records: [],
   current: null,
   captureMode: 'speak',
+  manualFields: new Set(),
+  aiHasAnalyzed: false,
   aiNote: '',
   aiResult: null,
   aiBusy: false,
@@ -43,7 +45,7 @@ function emptyRecord() {
     server_revision: 0,
     sync_state: 'pending',
     household_code: '',
-    households_visited: 1,
+    households_visited: null,
     people_present: null,
     water_source: '',
     follow_up_required: false,
@@ -58,7 +60,6 @@ function emptyRecord() {
 
 function normalizeRecord(record) {
   const normalized = { ...emptyRecord(), ...record };
-  if (normalized.households_visited === undefined || normalized.households_visited === null) normalized.households_visited = 1;
   if (normalized.follow_up_required === 'true') normalized.follow_up_required = true;
   if (normalized.follow_up_required === 'false') normalized.follow_up_required = false;
   return normalized;
@@ -119,13 +120,18 @@ async function api(path, options = {}) {
   return body;
 }
 
-function qualityIssues(record) {
-  const issues = [];
-  if (!record.household_code || !/^HH-[A-Za-z0-9-]{1,30}$/.test(record.household_code)) issues.push('Add a household code like HH-014.');
-  if (!record.households_visited || Number(record.households_visited) < 1) issues.push('Add the number of households visited.');
-  if (record.people_present === null || record.people_present === '' || Number(record.people_present) < 0) issues.push('Add the number of people present.');
-  if (!record.water_source) issues.push('Choose a water source.');
+function fieldIssueMap(record) {
+  const issues = {};
+  if (!record.household_code || !/^HH-[A-Za-z0-9-]{1,30}$/.test(record.household_code)) issues.household_code = 'Add a household code like HH-014.';
+  if (!record.households_visited || Number(record.households_visited) < 1) issues.households_visited = 'Add the number of households visited.';
+  if (record.people_present === null || record.people_present === '' || Number(record.people_present) < 0) issues.people_present = 'Add the number of people present.';
+  if (!record.water_source) issues.water_source = 'Choose a water source.';
+  if (record.follow_up_required && !record.follow_up_type) issues.follow_up_type = 'Choose a follow-up type.';
   return issues;
+}
+
+function qualityIssues(record) {
+  return Object.values(fieldIssueMap(record));
 }
 
 function pendingCount() {
@@ -186,7 +192,11 @@ function dashboardView() {
 function aiResultMarkup(result) {
   const extraction = result.extraction || result.draft || {};
   const rows = fields.map(([key, label]) => `<div class="suggestion-row"><span>${label}</span><strong>${esc(extraction[key] === null || extraction[key] === undefined || extraction[key] === '' ? 'Not found' : extraction[key])}</strong></div>`).join('');
-  return `<div class="ai-result"><div class="result-header"><div><p class="eyebrow accent">Review suggestions</p><h3>${result.quality?.is_confirmable ? 'The note is ready to review' : 'A few details still need your input'}</h3></div><span class="confidence-pill">${result.quality?.is_confirmable ? 'Good coverage' : 'Needs review'}</span></div><div class="suggestions-grid">${rows}</div><div class="original-note"><span>Original note</span><p>${esc(result.original_note || state.aiNote)}</p></div><div class="result-actions"><button class="button primary" data-action="use-extraction" type="button">Review in visit form</button><button class="text-button" data-action="clear-ai" type="button">Clear result</button></div></div>`;
+  const applied = result.applied;
+  const actions = applied
+    ? '<p class="ai-applied-note"><span aria-hidden="true">✓</span><span>These values were filled into the visit details below. Review anything marked <strong>Needs attention</strong>.</span></p><button class="text-button" data-action="clear-ai" type="button">Clear result</button>'
+    : '<button class="button primary" data-action="use-extraction" type="button">Review in visit form</button><button class="text-button" data-action="clear-ai" type="button">Clear result</button>';
+  return `<div class="ai-result"><div class="result-header"><div><p class="eyebrow accent">${applied ? 'Fields filled below' : 'Review suggestions'}</p><h3>${applied ? 'Check the visit details' : result.quality?.is_confirmable ? 'The note is ready to review' : 'A few details still need your input'}</h3></div><span class="confidence-pill">${applied ? 'Review now' : result.quality?.is_confirmable ? 'Good coverage' : 'Needs review'}</span></div><div class="suggestions-grid">${rows}</div><div class="original-note"><span>Original note</span><p>${esc(result.original_note || state.aiNote)}</p></div><div class="result-actions">${actions}</div></div>`;
 }
 
 function recentRows(records) {
@@ -254,12 +264,20 @@ async function saveCurrent(event) {
   setRoute('records');
 }
 
-function applyExtraction() {
+function applyExtraction(options = {}) {
   const extraction = state.aiResult?.extraction || state.aiResult?.draft;
   if (!extraction) return;
-  state.current = normalizeRecord({ ...(state.current || emptyRecord()), ...extraction, note: state.aiResult.original_note || state.aiNote || state.current?.note || '', status: 'draft' });
-  state.aiResult = null;
-  setRoute('visit');
+  const current = { ...(state.current || emptyRecord()) };
+  fields.forEach(([key]) => {
+    const value = extraction[key];
+    if (value !== null && value !== undefined && value !== '' && !state.manualFields.has(key)) current[key] = value;
+  });
+  state.current = normalizeRecord({ ...current, note: state.aiResult.original_note || state.aiNote || current.note || '', status: 'draft' });
+  state.aiHasAnalyzed = true;
+  if (!options.keepResult) {
+    state.aiResult = null;
+    setRoute('visit');
+  }
 }
 
 function startVoice(target) {
@@ -290,7 +308,17 @@ async function analyzeNote() {
   if (!note) { setNotice('Add or speak an observation first.', 'warning'); return; }
   state.aiBusy = true;
   render();
-  try { state.aiResult = await api('/api/extract', { method: 'POST', body: JSON.stringify({ note, synthetic_data_confirmed: true }) }); setNotice('AI suggestions are ready for your review.', 'success'); }
+  try {
+    const result = await api('/api/extract', { method: 'POST', body: JSON.stringify({ note, synthetic_data_confirmed: true }) });
+    state.aiResult = result;
+    if (visitForm && state.captureMode === 'speak') {
+      applyExtraction({ keepResult: true });
+      state.aiResult = { ...result, applied: true };
+      setNotice('AI filled the visit details. Review the fields marked Needs attention.', 'success');
+    } else {
+      setNotice('AI suggestions are ready for your review.', 'success');
+    }
+  }
   catch (error) { setNotice(error.message, 'warning'); }
   finally { state.aiBusy = false; render(); }
 }
@@ -344,6 +372,7 @@ function updateVisitActionState(form) {
   const confirmed = issues.length === 0;
   submit.textContent = issues.length ? 'Save draft' : (record.status === 'confirmed' ? 'Save changes' : 'Confirm visit');
   submit.classList.toggle('confirm-button', confirmed);
+  updateVisitFieldFeedback(form);
 }
 
 function applyCaptureMode(form) {
@@ -359,6 +388,71 @@ function applyCaptureMode(form) {
   if (help) help.textContent = manual
     ? 'Manual mode is selected. Complete the fields below, then confirm the visit.'
     : 'Speak mode is selected. Use the microphone, edit the note, then review it with AI.';
+  arrangeVisitCapture(form);
+  updateVisitFieldFeedback(form);
+}
+
+function arrangeVisitCapture(form) {
+  const mode = form.querySelector('#capture-mode');
+  const noteHeading = form.querySelector('.note-heading');
+  const noteHelp = form.querySelector('.note-heading + .field-help');
+  const textarea = form.querySelector('textarea[name="note"]');
+  const panel = form.querySelector('#visit-ai-panel');
+  const divider = form.querySelector('.form-divider');
+  if (!mode || !noteHeading || !noteHelp || !textarea || !divider) return;
+  let capture = form.querySelector('#speak-capture-area');
+  if (state.captureMode === 'speak') {
+    if (!capture) {
+      capture = document.createElement('section');
+      capture.id = 'speak-capture-area';
+      capture.className = 'speak-capture-area';
+      mode.after(capture);
+    }
+    [noteHeading, noteHelp, textarea, panel].filter(Boolean).forEach((node) => capture.append(node));
+  } else {
+    if (capture) capture.remove();
+    divider.after(noteHeading, noteHelp, textarea, panel);
+  }
+}
+
+function updateVisitFieldFeedback(form) {
+  const showIssues = state.captureMode === 'speak' && state.aiHasAnalyzed;
+  const issues = showIssues ? fieldIssueMap(state.current || emptyRecord()) : {};
+  form.querySelectorAll('[name]').forEach((field) => {
+    const label = field.closest('label');
+    if (!label) return;
+    const message = issues[field.name];
+    label.classList.toggle('field-missing', Boolean(message));
+    if (message) {
+      let error = label.querySelector('.field-error');
+      if (!error) {
+        error = document.createElement('span');
+        error.className = 'field-error';
+        label.append(error);
+      }
+      error.id = `field-error-${field.name}`;
+      error.innerHTML = `<span aria-hidden="true">!</span>${esc(message)}`;
+      field.setAttribute('aria-invalid', 'true');
+      field.setAttribute('aria-describedby', error.id);
+    } else {
+      label.querySelector('.field-error')?.remove();
+      field.removeAttribute('aria-invalid');
+      field.removeAttribute('aria-describedby');
+    }
+  });
+  let summary = form.querySelector('#visit-error-summary');
+  const messages = Object.values(issues);
+  if (messages.length) {
+    if (!summary) {
+      summary = document.createElement('div');
+      summary.id = 'visit-error-summary';
+      summary.className = 'visit-error-summary';
+      form.querySelector('#capture-mode')?.after(summary);
+    }
+    summary.innerHTML = `<strong>Needs attention</strong><span>${messages.length} field${messages.length === 1 ? '' : 's'} still need your input before confirmation.</span>`;
+  } else {
+    summary?.remove();
+  }
 }
 
 function enhanceVisitAssistant(form) {
@@ -384,17 +478,18 @@ function enhanceVisitAssistant(form) {
   $('#mode-speak')?.addEventListener('click', () => { state.captureMode = 'speak'; applyCaptureMode(form); });
   $('#mode-manual')?.addEventListener('click', () => { state.captureMode = 'manual'; applyCaptureMode(form); });
   applyCaptureMode(form);
-  textarea.insertAdjacentHTML('afterend', `<section id="visit-ai-panel" class="visit-ai-panel" aria-labelledby="visit-ai-title"><div class="visit-ai-heading"><div class="ai-badge">AI</div><div><p class="eyebrow accent">FieldHealth AI</p><h3 id="visit-ai-title">Review this note with the AI Field Assistant</h3><p>Speak or type above, edit the words while they are still fresh, then analyze the final note.</p></div></div><div class="visit-ai-actions"><span class="hint">Your note stays editable until you choose to apply suggestions.</span><button id="visit-ai-analyze" class="button primary" type="button" ${state.aiBusy ? 'disabled' : ''}>${state.aiBusy ? 'Analyzing…' : 'Analyze with AI'}</button></div>${state.aiResult ? aiResultMarkup(state.aiResult) : '<div class="visit-ai-empty">No suggestions yet. Complete your note first, then analyze it.</div>'}</section>`);
+  textarea.insertAdjacentHTML('afterend', `<section id="visit-ai-panel" class="visit-ai-panel" aria-labelledby="visit-ai-title"><div class="visit-ai-heading"><div class="ai-badge">AI</div><div><p class="eyebrow accent">FieldHealth AI</p><h3 id="visit-ai-title">Fill the visit details with AI</h3><p>Speak or type above, edit the words while they are still fresh, then let AI fill the existing fields below.</p></div></div><div class="visit-ai-actions"><span class="hint">Your note stays editable. AI will not replace fields you have already entered.</span><button id="visit-ai-analyze" class="button primary" type="button" ${state.aiBusy ? 'disabled' : ''}>${state.aiBusy ? 'Analyzing…' : 'Analyze & fill visit details'}</button></div>${state.aiResult ? aiResultMarkup(state.aiResult) : state.aiHasAnalyzed ? '<div class="visit-ai-empty"><strong>Fields filled below.</strong> Review anything marked Needs attention.</div>' : '<div class="visit-ai-empty">No suggestions yet. Complete your note first, then analyze it.</div>'}</section>`);
   $('#visit-ai-analyze')?.addEventListener('click', analyzeNote);
   $('#visit-ai-panel [data-action="use-extraction"]')?.addEventListener('click', applyExtraction);
   $('#visit-ai-panel [data-action="clear-ai"]')?.addEventListener('click', () => { state.aiResult = null; render(); });
+  arrangeVisitCapture(form);
   updateVisitActionState(form);
 }
 
 function bindViewEvents() {
   document.querySelectorAll('[data-route]').forEach((element) => element.addEventListener('click', (event) => { event.preventDefault(); setRoute(element.dataset.route); }));
-  document.querySelectorAll('[data-action="new-visit"]').forEach((element) => element.addEventListener('click', () => { state.current = emptyRecord(); state.captureMode = 'speak'; setRoute('visit'); }));
-  document.querySelectorAll('[data-action="edit-record"]').forEach((element) => element.addEventListener('click', () => { state.current = state.records.find((record) => record.id === element.dataset.id) || emptyRecord(); state.captureMode = 'speak'; setRoute('visit'); }));
+  document.querySelectorAll('[data-action="new-visit"]').forEach((element) => element.addEventListener('click', () => { state.current = emptyRecord(); state.captureMode = 'speak'; state.manualFields = new Set(); state.aiHasAnalyzed = false; state.aiResult = null; setRoute('visit'); }));
+  document.querySelectorAll('[data-action="edit-record"]').forEach((element) => element.addEventListener('click', () => { const existing = state.records.find((record) => record.id === element.dataset.id); state.current = existing || emptyRecord(); state.captureMode = 'speak'; state.manualFields = existing ? new Set(fields.map(([key]) => key)) : new Set(); state.aiHasAnalyzed = false; state.aiResult = null; setRoute('visit'); }));
   document.querySelectorAll('[data-action="cancel-visit"]').forEach((element) => element.addEventListener('click', () => setRoute('records')));
   document.querySelectorAll('[data-action="export-csv"]').forEach((element) => element.addEventListener('click', exportCsv));
   document.querySelectorAll('[data-action="use-extraction"]').forEach((element) => element.addEventListener('click', applyExtraction));
@@ -405,7 +500,7 @@ function bindViewEvents() {
   const form = $('#visit-form'); if (form) {
     enhanceVisitAssistant(form);
     form.addEventListener('submit', saveCurrent);
-    const refreshVisitState = () => { updateCurrentFromForm(form); updateVisitActionState(form); };
+    const refreshVisitState = (event) => { if (event.target?.name) state.manualFields.add(event.target.name); updateCurrentFromForm(form); updateVisitActionState(form); };
     form.addEventListener('input', refreshVisitState);
     form.addEventListener('change', refreshVisitState);
   }
