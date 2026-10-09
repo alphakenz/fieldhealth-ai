@@ -84,6 +84,7 @@ h3 { margin-bottom: 8px; font-size: 1.05rem; line-height: 1.2; }
 #main { max-width: 1440px; margin: 0 auto; padding: clamp(24px, 4vw, 54px) clamp(20px, 4vw, 56px) 72px; }
 .welcome-row, .page-intro { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 28px; }
 .welcome-row h2, .page-intro h2 { max-width: 700px; }
+.welcome-row h2 { font-size: clamp(1.6rem, 3.4vw, 2.2rem); }
 .lede { max-width: 710px; margin-bottom: 0; color: var(--muted); font-size: 1rem; }
 .card, .ai-card, .empty-card { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); }
 .card { padding: clamp(18px, 3vw, 28px); }
