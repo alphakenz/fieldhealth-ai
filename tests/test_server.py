@@ -46,6 +46,17 @@ class WorkflowTests(unittest.TestCase):
         with patch.dict(os.environ,{'AI_PROVIDER':'backboard','BACKBOARD_API_KEY':'test-key','BACKBOARD_MODEL':'verified-open-weight-model','BACKBOARD_PROVIDER':'openrouter'}),patch('server.post_json',return_value={'content':''}):
             with self.assertRaisesRegex(RuntimeError,'empty AI response'):
                 server.extract('Synthetic household note.')
+    def test_non_json_response_uses_explicit_facts_without_retry(self):
+        note='Visited HH-016. Five people were present. Main water source was not recorded. The household requested a follow-up health education visit.'
+        with patch.dict(os.environ,{'AI_PROVIDER':'backboard','BACKBOARD_API_KEY':'test-key','BACKBOARD_MODEL':'verified-open-weight-model','BACKBOARD_PROVIDER':'openrouter'}),patch('server.post_json',return_value={'content':'I found several administrative facts.'}) as call:
+            result=server.extract(note)
+        self.assertEqual(call.call_count,1)
+        self.assertEqual(result['draft']['household_code'],'HH-016')
+        self.assertEqual(result['draft']['households_visited'],1)
+        self.assertEqual(result['draft']['people_present'],5)
+        self.assertIsNone(result['draft']['water_source'])
+        self.assertTrue(result['draft']['follow_up_required'])
+        self.assertEqual(result['extraction_mode'],'explicit_facts_fallback')
     def test_unconfigured_ai_has_no_fake_result(self):
         with patch.dict(os.environ,{'AI_PROVIDER':'none'}):
             with self.assertRaises(RuntimeError):server.extract('Fictional household note.')
