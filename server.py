@@ -124,6 +124,25 @@ def post_json(url,payload,headers=None):
     request=Request(url,data=json.dumps(payload).encode(),headers={'Content-Type':'application/json',**(headers or {})})
     with urlopen(request,timeout=60) as r: return json.load(r)
 
+def parse_model_json(content, provider):
+    if isinstance(content, (dict, list)):
+        return content
+    if not isinstance(content, str) or not content.strip():
+        raise RuntimeError(f'{provider.title()} returned an empty AI response. Check that the selected model supports JSON output and that its provider/model settings are correct.')
+    cleaned = re.sub(r'^```(?:json)?\s*|\s*```$', '', content.strip(), flags=re.IGNORECASE)
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        # Some models wrap valid JSON in a short sentence even when JSON mode
+        # is requested. Recover only a complete object; never invent fields.
+        start, end = cleaned.find('{'), cleaned.rfind('}')
+        if start >= 0 and end > start:
+            try:
+                return json.loads(cleaned[start:end + 1])
+            except json.JSONDecodeError:
+                pass
+        raise RuntimeError(f'{provider.title()} returned a non-JSON AI response. Choose a model with JSON-output support or check the provider/model settings.')
+
 def extract(note):
     text(note,'note',4000,True)
     # Prototype input boundary: obvious identifiers are blocked, not silently redacted.
@@ -142,9 +161,7 @@ def extract(note):
         content=result['content']
         model=result.get('model_name',model)
     else: raise RuntimeError('AI is not configured. Use manual entry, or configure Backboard / Ollama on the server.')
-    if isinstance(content,str):
-        content=re.sub(r'^```(?:json)?\s*|\s*```$','',content.strip()); content=json.loads(content)
-    draft=validate_extraction(content)
+    draft=validate_extraction(parse_model_json(content, provider))
     return {'draft':draft,'issues':quality(draft),'model':model,'provider':provider,'prompt_version':'extract-v1','generated_at':dt.datetime.now(dt.timezone.utc).isoformat(),'review_status':'pending'}
 
 class Handler(SimpleHTTPRequestHandler):
